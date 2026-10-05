@@ -1,0 +1,494 @@
+"""Duplio — главное окно: вкладки «Дубликаты», «Сжатие», «Настройки», значок в трее, обновления."""
+
+import ctypes
+import getpass
+import os
+import sys
+import threading
+import time
+
+from PySide6.QtCore import QByteArray, QObject, QProcess, Qt, Signal
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
+from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QProgressBar,
+                               QPushButton, QStackedWidget, QSystemTrayIcon, QTabBar, QTextBrowser,
+                               QVBoxLayout, QWidget)
+
+import dupcore
+import i18n
+import logs
+import settings
+import theme
+import ui_util as U
+import updater
+from i18n import tr
+from logs import log
+from version import VERSION
+
+# Имя «почтового ящика» запущенной программы: второй запуск передаёт ему папку и закрывается.
+INSTANCE_KEY = "Duplio-" + getpass.getuser()
+# По этому имени установщик понимает, что программа открыта, и ждёт её закрытия.
+APP_MUTEX = "DuplioAppMutex"
+CHECK_EVERY = 20 * 3600         # автоматическая проверка обновлений — не чаще раза в ~сутки
+
+
+def resource(name):
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, name)
+
+
+class UpdateBridge(QObject):
+    found = Signal(object)          # Update или None
+    failed = Signal(str)
+    progress = Signal(object, object)
+    downloaded = Signal(str)
+
+
+class UpdateDialog(QDialog):
+    """Что нового → скачать (с прогрессом и проверкой) → установить и перезапустить."""
+
+    def __init__(self, win, upd):
+        super().__init__(win)
+        self.win, self.upd = win, upd
+        self.path = None
+        self.cancel = threading.Event()
+        self.setWindowTitle(tr("Доступна версия {v}", v=upd.version))
+        self.resize(560, 440)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(22, 18, 22, 18)
+        lay.setSpacing(12)
+        lay.addWidget(U.label(tr("Доступна версия {v}", v=upd.version), "h2"))
+        lay.addWidget(U.label(tr("Что нового"), "strong"))
+        notes = QTextBrowser()
+        notes.setOpenExternalLinks(True)
+        notes.setMarkdown(upd.notes or "—")
+        lay.addWidget(notes, 1)
+        self.bar = QProgressBar(textVisible=False, maximum=1000)
+        self.bar.hide()
+        lay.addWidget(self.bar)
+        self.status = U.label("", "muted", wrap=True)
+        lay.addWidget(self.status)
+        row = QHBoxLayout()
+        row.addStretch()
+        self.later = QPushButton(tr("Позже"))
+        self.later.clicked.connect(self.reject)
+        row.addWidget(self.later)
+        self.go = QPushButton(tr("Обновить"), objectName="accent")
+        self.go.clicked.connect(self._go)
+        row.addWidget(self.go)
+        lay.addLayout(row)
+        self.bridge = UpdateBridge()
+        self.bridge.progress.connect(self._progress)
+        self.bridge.downloaded.connect(self._downloaded)
+        self.bridge.failed.connect(self._failed)
+
+    def _go(self):
+        if self.path:                       # уже скачано — ставим
+            if self.win.dups.busy and not U.ask_yes_no(
+                    self, tr("Сейчас идёт поиск. Остановить его и обновиться сейчас? Найденное будет потеряно."),
+                    yes=tr("Остановить и обновить"), no=tr("Позже")):
+                return
+            log.info("Обновление: запускаю установщик %s", self.path)
+            updater.install(self.path)
+            self.win.quit_app()
+            return
+        self.go.setEnabled(False)
+        self.bar.show()
+
+        def work():
+            try:
+                self.bridge.downloaded.emit(updater.download(self.upd, self.bridge.progress.emit, self.cancel))
+            except updater.Cancelled:
+                pass
+            except ValueError:
+                log.warning("Обновление: контрольная сумма не совпала")
+                self.bridge.failed.emit(tr("Скачанный файл повреждён (не совпала контрольная сумма). "
+                                           "Попробуй ещё раз."))
+            except Exception as e:
+                log.exception("Обновление: скачать не удалось")
+                self.bridge.failed.emit(tr("Не удалось скачать обновление: {err}", err=e))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _progress(self, done, total):
+        if total:
+            self.bar.setValue(int(1000 * done / total))
+        self.status.setText(tr("Скачиваю обновление… {done} из {total}", done=dupcore.human_size(done),
+                               total=dupcore.human_size(total or done)))
+
+    def _downloaded(self, path):
+        self.path = path
+        self.bar.setValue(1000)
+        self.status.setText(tr("Обновление скачано. Программа закроется, установит новую версию и откроется снова."))
+        self.go.setText(tr("Установить и перезапустить"))
+        self.go.setEnabled(True)
+
+    def _failed(self, text):
+        self.status.setText(text)
+        self.bar.hide()
+        self.go.setEnabled(True)
+
+    def reject(self):
+        self.cancel.set()
+        super().reject()
+
+
+class Tabs(QWidget):
+    """Шапка со знаком и вкладками + страницы под ней.
+
+    Своя, а не QTabWidget: у того угловая область рисует собственную рамку, и знак слева
+    от вкладок оказывался в лишней полосе и ниже вкладок.
+    """
+
+    def __init__(self, brand):
+        super().__init__()
+        col = QVBoxLayout(self)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        self.header = QFrame(objectName="header")
+        row = QHBoxLayout(self.header)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(brand)
+        self.bar = QTabBar()
+        self.bar.setDrawBase(False)
+        self.bar.setExpanding(False)
+        self.bar.setDocumentMode(True)
+        row.addWidget(self.bar, 0, Qt.AlignBottom)
+        row.addStretch()
+        col.addWidget(self.header)
+        self.stack = QStackedWidget()
+        col.addWidget(self.stack, 1)
+        self.bar.currentChanged.connect(self.stack.setCurrentIndex)
+
+    def addTab(self, page, text):
+        self.stack.addWidget(page)
+        self.bar.addTab(text)
+
+    def setCurrentWidget(self, page):
+        self.bar.setCurrentIndex(self.stack.indexOf(page))
+
+    def currentWidget(self):
+        return self.stack.currentWidget()
+
+    def tabText(self, i):
+        return self.bar.tabText(i)
+
+    def count(self):
+        return self.bar.count()
+
+    def tabBar(self):
+        return self.bar
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, cfg):
+        super().__init__()
+        from compress_page import CompressPage      # после выбора языка: тексты вкладок берутся при создании
+        from dups_page import DupsPage
+        from settings_page import SettingsPage
+        from thumbs import Thumbs
+        U.install_hand_cursor(QApplication.instance())     # до создания вкладок: их кнопки тоже получат «пальчик»
+        self.cfg = cfg
+        self.quitting = False
+        self.update_info = None
+        self._manual_check = False
+        self.setWindowTitle(U.APP_TITLE)
+        self.icon = QIcon(resource("icon.ico"))
+        self.setWindowIcon(self.icon)
+        self.resize(1320, 880)
+        self.setMinimumSize(1040, 700)
+        self.mode = theme.resolve(cfg.get("theme", "system"))
+        self.colors = dict(theme.PALETTES[self.mode])
+        self.thumbs = Thumbs(360)
+
+        central = QWidget()
+        col = QVBoxLayout(central)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        self.banner = self._build_banner()
+        col.addWidget(self.banner)
+        self.tabs = Tabs(self._brand())
+        self.dups = DupsPage(cfg, self.thumbs, self.colors)
+        self.compress = CompressPage()
+        self.settings = SettingsPage(cfg)
+        self.tabs.addTab(self.dups, tr("Дубликаты"))
+        self.tabs.addTab(self.compress, tr("Сжатие"))
+        self.tabs.addTab(self.settings, tr("Настройки"))
+        col.addWidget(self.tabs, 1)
+        self.setCentralWidget(central)
+
+        self.dups.title_changed.connect(self._title)
+        self.dups.go_settings.connect(lambda: self.tabs.setCurrentWidget(self.settings))
+        self.dups.settings_changed.connect(lambda: settings.save(self.cfg))
+        self.dups.finished.connect(self._scan_finished)
+        self.settings.load_changed.connect(self.dups.set_load_text)
+        self.settings.theme_changed.connect(self.apply_theme)
+        self.settings.restart_requested.connect(self.restart)
+        self.settings.check_updates_requested.connect(lambda: self.check_updates(manual=True))
+        self.upd_bridge = UpdateBridge()
+        self.upd_bridge.found.connect(self._update_found)
+        self.upd_bridge.failed.connect(self._update_failed)
+        self.settings.open_logs_requested.connect(lambda: U.open_file(logs.DIR))
+        self._build_tray()
+        self.apply_theme()
+        self._crash_shown = False
+        logs.on_crash(self._crashed)
+
+    def _crashed(self, err):
+        """Неожиданная ошибка: сказать об этом и показать, где журнал. Один раз — без лавины окон."""
+        if self._crash_shown:
+            return
+        self._crash_shown = True
+        if U.ask_yes_no(self, tr("Что-то пошло не так: {err}\n\nПодробности записаны в журнал. "
+                                 "Программа продолжит работать.", err=err),
+                        yes=tr("Открыть журнал"), no=tr("Закрыть")):
+            U.open_file(logs.DIR)
+        self._crash_shown = False
+
+    def _brand(self):
+        """Знак и название слева от вкладок."""
+        box = QWidget()
+        row = QHBoxLayout(box)
+        row.setContentsMargins(22, 0, 22, 0)
+        row.setSpacing(8)
+        mark = QLabel()
+        mark.setPixmap(QPixmap(resource(os.path.join("icons", "mark-64.png"))).scaled(
+            26, 26, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        row.addWidget(mark)
+        row.addWidget(U.label("Duplio", "brand"))
+        return box
+
+    # ---------- обновления
+
+    def _build_banner(self):
+        banner = QFrame(objectName="banner")
+        row = QHBoxLayout(banner)
+        row.setContentsMargins(28, 10, 28, 10)
+        row.setSpacing(12)
+        self.banner_text = U.label("", "strong")
+        row.addWidget(self.banner_text)
+        notes = QPushButton(tr("Что нового"), objectName="link")
+        notes.setCursor(Qt.PointingHandCursor)
+        notes.clicked.connect(self.show_update)
+        row.addWidget(notes)
+        row.addStretch()
+        later = QPushButton(tr("Позже"))
+        later.clicked.connect(banner.hide)
+        row.addWidget(later)
+        go = QPushButton(tr("Обновить"), objectName="accent")
+        go.clicked.connect(self.show_update)
+        row.addWidget(go)
+        banner.hide()
+        return banner
+
+    def check_updates(self, manual=False):
+        if manual:
+            self.settings.set_update_status(tr("Проверяю…"))
+        self._manual_check = manual
+
+        def work():
+            try:
+                upd = updater.check()
+                log.info("Обновления: %s", f"доступна {upd.version}" if upd else "последняя версия")
+                self.upd_bridge.found.emit(upd)
+            except Exception as e:
+                log.warning("Обновления: проверка не удалась: %s", e)
+                self.upd_bridge.failed.emit(str(e))
+        threading.Thread(target=work, daemon=True).start()
+
+    def maybe_check_updates(self):
+        if self.cfg.get("check_updates", True) and time.time() - self.cfg.get("last_update_check", 0) > CHECK_EVERY:
+            self.check_updates()
+
+    def _update_found(self, upd):
+        self.update_info = upd
+        self.cfg["last_update_check"] = int(time.time())     # только удачная проверка откладывает следующую
+        settings.save(self.cfg)
+        if upd is None:
+            if self._manual_check:
+                self.settings.set_update_status(tr("Установлена последняя версия."))
+            return
+        self.settings.set_update_status(tr("Доступна версия {v}", v=upd.version))
+        self.banner_text.setText(tr("Доступна версия {v}", v=upd.version))
+        self.banner.show()
+
+    def _update_failed(self, err):
+        if self._manual_check:
+            self.settings.set_update_status(tr("Не удалось проверить обновления: {err}", err=err))
+
+    def show_update(self):
+        if self.update_info:
+            dlg = UpdateDialog(self, self.update_info)
+            dlg.setAttribute(Qt.WA_DeleteOnClose)
+            dlg.exec()
+
+    # ---------- трей
+
+    def _build_tray(self):
+        tray_icon = "tray-light-taskbar.ico" if theme.taskbar_light() else "tray-dark-taskbar.ico"
+        self.tray = QSystemTrayIcon(QIcon(resource(os.path.join("icons", tray_icon))), self)
+        self.tray.setToolTip(U.APP_TITLE)
+        menu = QMenu()
+        menu.addAction(tr("Открыть"), self.bring_back)
+        menu.addSeparator()
+        self.act_stop = menu.addAction(tr("Остановить поиск"), self.dups.stop_scan)
+        menu.addAction(tr("Выход"), self.quit_app)
+        menu.aboutToShow.connect(lambda: self.act_stop.setVisible(self.dups.busy))
+        self.tray_menu = menu
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(
+            lambda reason: self.bring_back() if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick)
+            else None)
+        self.tray.messageClicked.connect(self.bring_back)
+        self.tray.show()
+
+    def _title(self, text):
+        self.setWindowTitle(text)
+        self.tray.setToolTip(text)              # ход поиска виден и при наведении на значок в трее
+
+    def bring_back(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _scan_finished(self, groups, size):
+        if self.isVisible() and not self.isMinimized():
+            return
+        if groups:
+            text = tr("Найдено групп копий: {n}. Можно освободить {size}.", n=i18n.num(groups),
+                      size=dupcore.human_size(size))
+        else:
+            text = tr("Точных копий не нашлось.")
+        self.tray.showMessage(tr("Поиск завершён"), text, self.icon, 8000)
+
+    def quit_app(self):
+        self.quitting = True
+        self.close()
+
+    def restart(self):
+        """Перезапуск (например, после смены языка): новая копия поднимется, когда эта закроется."""
+        if getattr(self, "server", None):
+            self.server.close()
+        if getattr(sys, "frozen", False):
+            QProcess.startDetached(sys.executable, [])
+        else:
+            QProcess.startDetached(sys.executable, [os.path.abspath(__file__)])
+        self.quit_app()
+
+    def closeEvent(self, e):
+        if self.cfg.get("close_to_tray", True) and not self.quitting:
+            e.ignore()
+            self.hide()
+            if not self.cfg.get("tray_hint_shown"):
+                self.tray.showMessage(U.APP_TITLE, tr("Программа свёрнута в трей и продолжает работать. Открыть — "
+                                                      "щелчок по значку, выйти — правой кнопкой → «Выход». "
+                                                      "Поменять можно в «Настройках»."), self.icon, 8000)
+                self.cfg["tray_hint_shown"] = True
+                settings.save(self.cfg)
+            return
+        if self.dups.cancel:
+            self.dups.cancel.set()
+        settings.save(self.cfg)
+        log.info("Выход")
+        release_mutex()
+        self.tray.hide()
+        super().closeEvent(e)
+        QApplication.instance().quit()
+
+    # ---------- тема
+
+    def apply_theme(self):
+        self.mode = theme.resolve(self.cfg.get("theme", "system"))
+        self.colors.clear()
+        self.colors.update(theme.PALETTES[self.mode])     # тот же словарь — страницы видят новые цвета
+        QApplication.instance().setStyleSheet(theme.stylesheet(self.colors, resource("icons")))
+        theme.dark_title_bar(self, self.mode == "dark")
+        if self.dups.groups:
+            self.dups.current_group = None
+            self.dups.refresh()
+
+    # ---------- второй запуск
+
+    def open_folder(self, folder):
+        self.bring_back()
+        if folder and os.path.isdir(folder) and not self.dups.busy:
+            self.tabs.setCurrentWidget(self.dups)
+            self.dups.folder.setText(os.path.normpath(folder))
+
+
+_mutex = None
+
+
+def release_mutex():
+    """Отпустить метку «программа открыта» — установщик обновления дальше не ждёт."""
+    global _mutex
+    if _mutex:
+        ctypes.windll.kernel32.CloseHandle(_mutex)
+        _mutex = None
+
+
+def already_running(folder):
+    """Если программа уже запущена — показать её окно (и передать папку) и вернуть True."""
+    sock = QLocalSocket()
+    sock.connectToServer(INSTANCE_KEY)
+    if not sock.waitForConnected(300):
+        return False
+    sock.write(QByteArray((folder or "").encode("utf-8")))
+    sock.waitForBytesWritten(1000)
+    sock.disconnectFromServer()
+    return True
+
+
+def listen(win):
+    server = QLocalServer(win)
+    QLocalServer.removeServer(INSTANCE_KEY)          # хвост от программы, закрытой аварийно
+    server.listen(INSTANCE_KEY)
+
+    def incoming():
+        conn = server.nextPendingConnection()
+
+        def read():
+            win.open_folder(bytes(conn.readAll()).decode("utf-8", "replace"))
+        conn.readyRead.connect(read)
+        conn.disconnected.connect(conn.deleteLater)
+        if conn.bytesAvailable() or conn.waitForReadyRead(300):
+            read()
+        else:
+            win.bring_back()
+    server.newConnection.connect(incoming)
+    return server
+
+
+def main():
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    app = QApplication(sys.argv)
+    app.setApplicationName(U.APP_TITLE)
+    app.setQuitOnLastWindowClosed(False)            # окно может прятаться в трей
+    args = [a for a in sys.argv[1:] if a != "--scan"]
+    folder = args[0] if args and os.path.isdir(args[0]) else ""
+    autostart = "--scan" in sys.argv[1:]
+    if already_running(folder):
+        return
+    global _mutex
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, APP_MUTEX)
+    cfg = settings.load()
+    i18n.set_lang(cfg.get("lang", "auto"))
+    logs.setup(VERSION)
+    log.info("Язык %s, тема %s, нагрузка %s", i18n.LANG, cfg.get("theme"), cfg.get("load"))
+    updater.cleanup()                                 # установщик прошлого обновления больше не нужен
+    win = MainWindow(cfg)
+    win.server = listen(win)
+    win.show()
+    theme.dark_title_bar(win, win.mode == "dark")
+    # Duplio.exe "E:\Фото" или перетащить папку на значок — папка подставится, поиск — кнопкой.
+    # Duplio.exe --scan "E:\Фото" — сразу начать поиск.
+    if folder:
+        win.dups.folder.setText(os.path.normpath(folder))
+        if autostart:
+            win.dups.start_scan()
+    win.maybe_check_updates()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
