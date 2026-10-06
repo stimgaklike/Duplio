@@ -361,6 +361,82 @@ finally:
 counts = sorted({t for t in texts if t.startswith("Заменяю файлы: ") and t.endswith(" из 8")})
 check(len(counts) >= 3, f"в окне замены идёт счётчик «N из 8»: {counts}")
 
+# ---------- перетаскивание файлов и папок на окно
+from PySide6.QtCore import QMimeData, QPoint, QUrl  # noqa: E402
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent  # noqa: E402
+from PySide6.QtWidgets import QWidget  # noqa: E402
+
+
+def drag(paths, drop=True, snap=None):
+    """Тащим пути на середину окна; возвращает (видна ли подсказка, её текст, влезает ли она в окно)."""
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
+    pos = QPoint(w.width() // 2, w.height() // 2)
+    QApplication.sendEvent(w, QDragEnterEvent(pos, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    pump(0.1)
+    h = w.drop_hint
+    inside = w.centralWidget().rect().contains(h.geometry()) and h.width() > 300 and h.height() > 200
+    seen = (h.isVisible(), w.drop_hint_text, inside)
+    if snap:
+        w.grab().save(os.path.join(shots, snap))
+    if drop:
+        QApplication.sendEvent(w, QDropEvent(QPointF(pos), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    else:
+        QApplication.sendEvent(w, QDragLeaveEvent())
+    pump(0.2)
+    return seen
+
+
+takers = [type(wd).__name__ for wd in w.centralWidget().findChildren(QWidget) if wd.acceptDrops()]   # само окно
+check(not takers, f"ни одно поле внутри окна не перехватывает бросок — он доходит до окна ({takers})")
+
+w.tabs.setCurrentWidget(c)
+shown = drag([img2, low], drop=False, snap="qt_drop_hint.png")
+check(shown == (True, "Отпусти — сожму только 2 файла", True),
+      f"пока тащишь два файла на «Сжатие» — подсказка во всё окно: {shown}")
+check(not w.drop_hint.isVisible() and c.drop_files is None, "увёл мимо — подсказка пропала, ничего не изменилось")
+drag([img2, low])
+check(not w.drop_hint.isVisible() and c.drop_files == [img2, low] and not c.folder.isVisible()
+      and c.files_note.isVisible() and c.files_note.text() == "Перетащено: 2 файла",
+      f"брошенные файлы — во «Сжатии» вместо папки: {c.files_note.text()!r}")
+answers.clear()
+c.mode_btns["lossless"].click()
+c.start()
+wait(lambda: not c.busy, 60)
+pump(0.5)
+done_names = sorted(os.path.basename(j.path) for j in c.result.jobs)
+check(done_names == sorted([os.path.basename(img2), os.path.basename(low)]),
+      f"сжимаются только брошенные файлы, а не вся папка: {done_names}")
+c.files_reset.click()
+check(c.drop_files is None and c.folder.isVisible(), "«Сбросить» — снова папка из поля")
+sub = os.path.dirname(img1)
+drag([sub])
+check(c.folder.text() == os.path.normpath(sub) and c.drop_files is None, "брошенная папка — в поле «Папка» «Сжатия»")
+
+w.tabs.setCurrentWidget(w.dups)
+w.dups.chips["photo"].setChecked(False)
+shown = drag([img2, low])
+check(w.dups.folder.text() == os.path.dirname(img2) or w.dups.folder.text() == os.path.commonpath(
+    [os.path.dirname(img2), os.path.dirname(low)]), f"файлы на «Дубликатах» — подставлена их папка: {w.dups.folder.text()}")
+check(w.dups.chips["photo"].isChecked() and not w.dups.busy, "и отмечен их тип (фото); поиск сам не начался")
+
+w.tabs.setCurrentWidget(w.settings)
+drag([sub])
+check(w.tabs.currentWidget() is w.dups and w.dups.folder.text() == os.path.normpath(sub),
+      "папка, брошенная на «Настройки», уходит в «Дубликаты»")
+w.tabs.setCurrentWidget(w.settings)
+drag([clip])
+check(w.tabs.currentWidget() is c and c.drop_files == [clip], "видео, брошенное на «Настройки», уходит в «Сжатие»")
+
+c.busy = True
+answers.clear()
+before = list(c.drop_files)
+drag([img2])
+c.busy = False
+check(c.drop_files == before and any(a[0] == "warn" and "идёт сжатие" in a[1] for a in answers),
+      "во время сжатия бросок не принимается — объяснено почему")
+c.use_files(None)
+
 # ---------- установщик просит закрыться (тот же канал, что у второго запуска)
 from PySide6.QtCore import QByteArray  # noqa: E402
 from PySide6.QtNetwork import QLocalSocket  # noqa: E402

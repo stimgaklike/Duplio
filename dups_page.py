@@ -311,6 +311,7 @@ class DupsPage(QWidget):
         grid.setColumnMinimumWidth(0, 96)
         grid.addWidget(U.label(tr("Папка"), "strong"), 0, 0)
         self.folder = QLineEdit(self.cfg.get("last_folder", ""))
+        self.folder.setAcceptDrops(False)        # файлы бросают на окно целиком — поле их не перехватывает
         self.folder.setPlaceholderText(tr("Например, E:\\ или C:\\Users\\Имя\\Pictures"))
         self.folder.returnPressed.connect(self.start_scan)
         frow = QHBoxLayout()
@@ -507,6 +508,26 @@ class DupsPage(QWidget):
         if d:
             self.folder.setText(os.path.normpath(d))
             self.btn_scan.setFocus()           # поиск — по кнопке «Начать поиск», не сам
+
+    def use_drop(self, paths):
+        """Перетащенное: папка — в поле; файлы — их папка, и отмечается их тип (фото, видео…)."""
+        dirs = [p for p in paths if os.path.isdir(p)]
+        files = [p for p in paths if not os.path.isdir(p)]
+        if dirs:
+            folder = dirs[0]
+        else:
+            try:
+                folder = os.path.commonpath([os.path.dirname(p) for p in files])
+            except ValueError:                    # файлы с разных дисков — папка первого
+                folder = os.path.dirname(files[0])
+        for k in {dupcore.kind_of(p) for p in files}:
+            self.chips[k].setChecked(True)
+        self.folder.setText(os.path.normpath(folder))
+        self.btn_scan.setFocus()                  # поиск — по кнопке «Начать поиск», не сам
+        if len(dirs) > 1:
+            self.step_text.setText(tr("Перетащено несколько папок — подставлена первая: {name}",
+                                      name=os.path.basename(folder) or folder))
+        return folder
 
     def start_scan(self):
         if self.busy:

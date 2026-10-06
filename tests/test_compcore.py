@@ -383,6 +383,24 @@ class PrepareFolder(Base):
         self.assertEqual(names[2:], ["z_big.mp4", "a_small.mp4"])
         self.assertFalse(res.cancelled)
 
+    def test_dropped_files_only_those(self):
+        a = save_jpeg(photo(400, 300), self.p("a.jpg"))
+        save_jpeg(photo(400, 300, seed=2), self.p("b.jpg"))                 # лежит рядом, но не брошен
+        Image.fromarray(np.full((80, 90, 3), 90, np.uint8)).save(self.p("c.png"), compress_level=0)
+        with open(self.p("notes.txt"), "w") as f:
+            f.write("не фото")
+        res = C.prepare([a, self.p("c.png"), self.p("notes.txt")], {"photo"}, "lossless")
+        self.assertEqual(sorted(os.path.basename(j.path) for j in res.jobs), ["a.jpg", "c.png"])
+        self.assertEqual(res.unsupported, 1)
+
+    def test_dropped_folder_and_its_file_counted_once(self):
+        sub = os.path.join(self.root, "sub")
+        os.makedirs(sub)
+        a = save_jpeg(photo(400, 300), os.path.join(sub, "a.jpg"))
+        save_jpeg(photo(400, 300, seed=2), os.path.join(sub, "b.jpg"))
+        res = C.prepare([sub, a, a.upper()], {"photo"}, "lossless")
+        self.assertEqual(sorted(os.path.basename(j.path).lower() for j in res.jobs), ["a.jpg", "b.jpg"])
+
     def test_stops_when_disk_is_full(self):
         save_jpeg(photo(400, 300), self.p("a.jpg"))
         old = C.RESERVE

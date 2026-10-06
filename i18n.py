@@ -373,6 +373,26 @@ EN = {
     "Сжатые копии ещё не заменили оригиналы. Закрыть программу? Они пропадут.":
         "The compressed copies haven't replaced the originals yet. Close the app? They will be lost.",
     "Не закрывать": "Don't close",
+    # ---- перетаскивание
+    "Сбросить": "Clear",
+    "Снова сжимать папку из поля": "Compress the folder from the field again",
+    " Перетащенных файлов другого типа: {n} — программа их не сжимает.":
+        " Dropped files of other types: {n} — the app doesn't compress them.",
+    "Перетащено: {what}": "Dropped: {what}",
+    "Перетащенных файлов больше нет на месте.": "The dropped files are no longer there.",
+    "Отпусти — сожму только {what}": "Drop to compress only {what}",
+    "Остальные файлы в папках не трону. Сжатые копии начну готовить по кнопке.":
+        "Other files in the folders stay untouched. Compressed copies are prepared when you press the button.",
+    "поиск": "a scan",
+    "сжатие": "compression",
+    "Сейчас идёт {what} — дождись конца или останови его.":
+        "Duplio is busy with {what} — wait until it finishes or stop it.",
+    "Отпусти — подставлю папку «{name}» в «Дубликаты»": "Drop to use the folder “{name}” in Duplicates",
+    "Искать начну по кнопке «Начать поиск».": "The scan starts when you press “Start scan”.",
+    "Отпусти — подставлю папку «{name}» в «Сжатие»": "Drop to use the folder “{name}” in Compression",
+    "Сжатые копии начну готовить по кнопке.": "Compressed copies are prepared when you press the button.",
+    " и ": " and ",
+    "Перетащено несколько папок — подставлена первая: {name}": "Several folders were dropped — using the first one: {name}",
     "Сжатие ещё идёт или сжатые копии не заменили оригиналы. Обновиться сейчас? Готовые копии пропадут.":
         "Compression is still running or the compressed copies haven't replaced the originals. Update now? "
         "The ready copies will be lost.",

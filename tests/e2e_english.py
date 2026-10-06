@@ -180,6 +180,20 @@ for mode in ("lossless", "visual"):
     c.busy = False
     for note in filter(None, [w.busy_note()]):
         said.extend(x for x in note if isinstance(x, str))
+# Перетаскивание: подсказки поверх окна и «Перетащено: …» во «Сжатии».
+for tab, items in ((c, [os.path.join(croot, "a.jpg"), os.path.join(croot, "v.mp4")]), (c, [croot]),
+                   (w.dups, [os.path.join(croot, "a.jpg")]), (w.settings, [croot, os.path.join(croot, "a.jpg")])):
+    w.tabs.setCurrentWidget(tab)
+    page, title, sub = w.drop_plan(items)
+    said.extend([title, sub])
+c.use_files([os.path.join(croot, "a.jpg"), croot])
+w.tabs.setCurrentWidget(c)
+pump(0.2)
+scan_widgets("сжатие: перетащенные файлы")
+c.busy = True
+said.extend(w.drop_plan([croot])[1:])
+c.busy = False
+c.use_files(None)
 w.hide()                                   # уведомление в трее — только когда окна не видно
 w._compress_finished(2, 1000)
 w._compress_finished(0, 0)

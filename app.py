@@ -2,6 +2,7 @@
 
 import ctypes
 import getpass
+import html
 import os
 import sys
 import threading
@@ -221,6 +222,11 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.settings, tr("Настройки"))
         col.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
+        # Перетаскивание файлов и папок на окно: подсказка поверх, пока тащат (drop_plan решает, куда что).
+        self.setAcceptDrops(True)
+        self.drop_hint = QLabel(central, objectName="dropHint", alignment=Qt.AlignCenter, wordWrap=True)
+        self.drop_hint.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.drop_hint.hide()
 
         self.dups.title_changed.connect(self._title)
         self.dups.go_settings.connect(lambda: self.tabs.setCurrentWidget(self.settings))
@@ -472,6 +478,84 @@ class MainWindow(QMainWindow):
         self.compress.update()
 
     # ---------- второй запуск
+
+    # ---------- перетаскивание
+
+    @staticmethod
+    def dropped_paths(mime):
+        return [os.path.normpath(u.toLocalFile()) for u in mime.urls()
+                if u.isLocalFile() and os.path.exists(u.toLocalFile())]
+
+    def drop_plan(self, paths):
+        """Куда пойдёт перетащенное: (вкладка, что сказать до броска, None) или (None, почему нельзя)."""
+        cur = self.tabs.currentWidget()
+        dirs = [p for p in paths if os.path.isdir(p)]
+        files = [p for p in paths if not os.path.isdir(p)]
+        media = compcore.wanted_ext({"photo", "video"})
+        if cur is self.settings:
+            cur = self.compress if files and not dirs and all(
+                os.path.splitext(p)[1].lower() in media for p in files) else self.dups
+        if cur.busy:
+            what = tr("поиск") if cur is self.dups else tr("сжатие")
+            return None, tr("Сейчас идёт {what} — дождись конца или останови его.", what=what), ""
+        if cur is self.dups:
+            folder = dirs[0] if dirs else os.path.dirname(files[0])
+            return (cur, tr("Отпусти — подставлю папку «{name}» в «Дубликаты»", name=os.path.basename(folder) or folder),
+                    tr("Искать начну по кнопке «Начать поиск»."))
+        if len(dirs) == 1 and not files:
+            return (cur, tr("Отпусти — подставлю папку «{name}» в «Сжатие»", name=os.path.basename(dirs[0]) or dirs[0]),
+                    tr("Сжатые копии начну готовить по кнопке."))
+        parts = []
+        if dirs:
+            parts.append(f"{i18n.num(len(dirs))} {i18n.plural(len(dirs), 'папку|папки|папок', 'folder|folders')}")
+        if files:
+            parts.append(f"{i18n.num(len(files))} {i18n.plural(len(files), 'файл|файла|файлов', 'file|files')}")
+        return (cur, tr("Отпусти — сожму только {what}", what=tr(" и ").join(parts)),
+                tr("Остальные файлы в папках не трону. Сжатые копии начну готовить по кнопке."))
+
+    def _show_drop_hint(self, title, sub=""):
+        self.drop_hint_text = title               # без разметки — для журнала и тестов
+        self.drop_hint.setText(f"{html.escape(title)}<div style='font-size:14px; font-weight:400; "
+                               f"color:{self.colors['muted']}; margin-top:10px'>{html.escape(sub)}</div>")
+        self.drop_hint.setGeometry(self.centralWidget().rect().adjusted(16, 16, -16, -16))
+        self.drop_hint.raise_()
+        self.drop_hint.show()
+
+    def dragEnterEvent(self, e):
+        paths = self.dropped_paths(e.mimeData())
+        if not paths:
+            e.ignore()
+            return
+        page, title, sub = self.drop_plan(paths)
+        self._show_drop_hint(title, sub)
+        e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        e.acceptProposedAction()
+
+    def dragLeaveEvent(self, e):
+        self.drop_hint.hide()
+
+    def dropEvent(self, e):
+        self.drop_hint.hide()
+        paths = self.dropped_paths(e.mimeData())
+        if not paths:
+            return
+        page, title, _sub = self.drop_plan(paths)
+        if page is None:
+            U.warn(self, title)
+            return
+        e.acceptProposedAction()
+        self.bring_back()
+        self.tabs.setCurrentWidget(page)
+        dirs = [p for p in paths if os.path.isdir(p)]
+        log.info("Перетащено: %d (папок %d) → %s", len(paths), len(dirs), type(page).__name__)
+        if page is self.dups:
+            page.use_drop(paths)
+        elif len(dirs) == 1 and len(paths) == 1:
+            page.use_folder(dirs[0])
+        else:
+            page.use_files(paths)
 
     def open_folder(self, folder):
         self.bring_back()

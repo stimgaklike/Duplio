@@ -171,6 +171,7 @@ class PrepResult:
     errors: list = field(default_factory=list)     # (путь, текст) — папки и файлы, которые не прочитались
     cancelled: bool = False
     no_space: bool = False
+    unsupported: int = 0                           # перетащенные файлы, которые программа не сжимает
 
 
 def wanted_ext(kinds):
@@ -594,8 +595,46 @@ LOAD = {
 }
 
 
+def gather(items, exts, cancel=None, errors=None, cloud=None, on_file=None):
+    """Файлы для сжатия из перетащенного: папки обходятся целиком, файлы берутся как есть.
+
+    Возвращает (MediaFile[], сколько файлов не того типа). Тот же файл дважды не берётся; ссылки,
+    облачные заглушки и пустые файлы — как при обходе папки.
+    """
+    out, seen, unsupported = [], set(), 0
+    for item in items:
+        if os.path.isdir(item):
+            found = dupcore.collect(item, cancel, errors, take=lambda e: e in exts, cloud=cloud,
+                                    on_file=on_file and (lambda n, base=len(out): on_file(base + n)))
+        else:
+            if os.path.splitext(item)[1].lower() not in exts:
+                unsupported += 1
+                continue
+            if dupcore._is_link(item):
+                continue
+            try:
+                st = os.stat(item)
+            except OSError as e:
+                if errors is not None:
+                    errors.append((item, e.strerror or str(e)))
+                continue
+            if dupcore.is_cloud_only(st):
+                if cloud is not None:
+                    cloud.append(item)
+                continue
+            found = [dupcore.MediaFile(item, st.st_size, st.st_mtime)]
+        for m in found:
+            key = os.path.normcase(os.path.abspath(m.path))
+            if key not in seen:
+                seen.add(key)
+                out.append(m)
+        if on_file:
+            on_file(len(out))
+    return out, unsupported
+
+
 def prepare(root, kinds, mode, progress=None, cancel=None, load="normal", on_job=None):
-    """Найти файлы и подготовить сжатые копии.
+    """Найти файлы и подготовить сжатые копии. root — папка или список перетащенных файлов и папок.
 
     progress(сделано_байт, всего_байт, сделано_файлов, всего_файлов, имя_текущего) — из потока подготовки.
     on_job(job) — сразу, как файл готов (сжат или пропущен).
@@ -611,8 +650,12 @@ def prepare(root, kinds, mode, progress=None, cancel=None, load="normal", on_job
     try:
         exts = wanted_ext(kinds)
         cloud = []
-        files = dupcore.collect(root, cancel, res.errors, take=lambda e: e in exts, cloud=cloud,
-                                on_file=lambda n: progress(0, 0, 0, n, ""))
+        if isinstance(root, (list, tuple)):
+            files, res.unsupported = gather(root, exts, cancel, res.errors, cloud,
+                                            on_file=lambda n: progress(0, 0, 0, n, ""))
+        else:
+            files = dupcore.collect(root, cancel, res.errors, take=lambda e: e in exts, cloud=cloud,
+                                    on_file=lambda n: progress(0, 0, 0, n, ""))
         res.cloud_skipped = len(cloud)
         jobs = [Job(m.path, m.size, m.mtime) for m in files if m.size > 0]
         jobs.sort(key=lambda j: (j.is_video, -j.size if j.is_video else j.path.lower()))

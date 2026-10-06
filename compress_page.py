@@ -434,6 +434,7 @@ class CompressPage(QWidget):
         self.scan_root = ""
         self._updating = False
         self._times = {}
+        self.drop_files = None     # перетащенные файлы и папки — сжать именно их (None — папка из поля)
         self.previews = Previews()
         self.previews.ready.connect(self._preview_ready)
         self.bridge = Bridge()
@@ -467,9 +468,17 @@ class CompressPage(QWidget):
         self.folder = QLineEdit(self.cfg.get("compress_folder") or self.cfg.get("last_folder", ""))
         self.folder.setPlaceholderText(tr("Например, E:\\ или C:\\Users\\Имя\\Pictures"))
         self.folder.returnPressed.connect(self.start)
+        self.folder.setAcceptDrops(False)        # файлы бросают на окно целиком — поле их не перехватывает
+        self.folder.textEdited.connect(lambda _t: self.use_files(None))
         frow = QHBoxLayout()
         frow.setSpacing(8)
         frow.addWidget(self.folder, 1)
+        self.files_note = U.label("", "strong")
+        frow.addWidget(self.files_note, 1)
+        self.files_reset = QPushButton(tr("Сбросить"), objectName="link")
+        self.files_reset.setToolTip(tr("Снова сжимать папку из поля"))
+        self.files_reset.clicked.connect(lambda: self.use_files(None))
+        frow.addWidget(self.files_reset)
         choose = QPushButton(tr("Выбрать…"))
         choose.clicked.connect(self.choose)
         frow.addWidget(choose)
@@ -659,6 +668,7 @@ class CompressPage(QWidget):
         self.mode_btns[mode if mode in MODE_TEXT else "lossless"].setChecked(True)
         self._mode_picked(self.mode())
         self.show_job(None)
+        self.use_files(None)
 
     def set_load_text(self):
         self.load_text.setText(tr("Нагрузка на компьютер: {name}",
@@ -708,16 +718,45 @@ class CompressPage(QWidget):
     def choose(self):
         d = QFileDialog.getExistingDirectory(self, tr("Что сжимать"), self.folder.text() or "")
         if d:
-            self.folder.setText(os.path.normpath(d))
+            self.use_folder(d)
+
+    def use_folder(self, path):
+        self.use_files(None)
+        self.folder.setText(os.path.normpath(path))
+        self.btn_start.setFocus()             # подготовка — по кнопке, не сама
+
+    def use_files(self, paths):
+        """Сжать именно перетащенные файлы и папки (None — снова папку из поля)."""
+        self.drop_files = [os.path.normpath(p) for p in paths] if paths else None
+        on = self.drop_files is not None
+        self.folder.setVisible(not on)
+        self.files_note.setVisible(on)
+        self.files_reset.setVisible(on)
+        if on:
+            dirs = sum(os.path.isdir(p) for p in self.drop_files)
+            files = len(self.drop_files) - dirs
+            parts = []
+            if files:
+                parts.append(f"{num(files)} {plural(files, 'файл|файла|файлов', 'file|files')}")
+            if dirs:
+                parts.append(f"{num(dirs)} {plural(dirs, 'папка|папки|папок', 'folder|folders')}")
+            self.files_note.setText(tr("Перетащено: {what}", what=", ".join(parts)))
+            self.files_note.setToolTip("\n".join(self.drop_files[:30]))
             self.btn_start.setFocus()
 
     def start(self):
         if self.busy:
             return
-        root = self.folder.text().strip().strip('"')
-        if not root or not os.path.isdir(root):
-            U.warn(self, tr("Такой папки нет. Нажми «Выбрать…» и укажи папку."))
-            return
+        if self.drop_files:
+            root = [p for p in self.drop_files if os.path.exists(p)]
+            if not root:
+                U.warn(self, tr("Перетащенных файлов больше нет на месте."))
+                return
+        else:
+            root = self.folder.text().strip().strip('"')
+            if not root or not os.path.isdir(root):
+                U.warn(self, tr("Такой папки нет. Нажми «Выбрать…» и укажи папку."))
+                return
         kinds, mode = self.kinds(), self.mode()
         if not kinds:
             U.warn(self, tr("Отметь, что сжимать: фото или видео."))
@@ -730,9 +769,16 @@ class CompressPage(QWidget):
                 self, tr("Подготовленные копии ещё не заменили оригиналы. Начать заново? Они пропадут."),
                 yes=tr("Начать заново")):
             return
-        self.cfg["compress_folder"] = root
-        self.settings_changed.emit()
-        self.scan_root = os.path.abspath(root)
+        if isinstance(root, list):
+            # Пути в списке — относительно общей папки перетащенного (на разных дисках — полностью).
+            try:
+                self.scan_root = os.path.commonpath([p if os.path.isdir(p) else os.path.dirname(p) for p in root])
+            except ValueError:
+                self.scan_root = ""
+        else:
+            self.cfg["compress_folder"] = root
+            self.settings_changed.emit()
+            self.scan_root = os.path.abspath(root)
         self.ready, self.skipped, self.marked, self.pending = [], [], set(), []
         self.result = None
         self._times = {}
@@ -852,6 +898,8 @@ class CompressPage(QWidget):
         if res.cloud_skipped:
             seen += tr(" Пропущено файлов, которые лежат только в облаке или на телефоне: {n} — их пришлось "
                        "бы скачивать.", n=num(res.cloud_skipped))
+        if res.unsupported:
+            seen += tr(" Перетащенных файлов другого типа: {n} — программа их не сжимает.", n=num(res.unsupported))
         if res.no_space:
             self.step_text.setText(tr("Место на диске кончается — подготовку остановил."))
             self.status.setText(tr("Замени готовые файлы — место освободится, и можно продолжить."))

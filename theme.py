@@ -80,6 +80,8 @@ QLabel#muted {{ color: {c['muted']}; }}
 QLabel#small {{ color: {c['muted']}; font-size: 12px; }}
 QLabel#warn {{ color: {c['warn']}; }}
 QLabel#empty {{ color: {c['muted']}; font-size: 15px; }}
+QLabel#dropHint {{ background: {c['surface']}; color: {c['text']}; border: 2px dashed {c['accent']};
+    border-radius: 14px; font-size: 18px; font-weight: 700; padding: 24px; }}
 
 QTabWidget::pane {{ border: none; background: {c['bg']}; }}
 QTabBar {{ background: transparent; }}
