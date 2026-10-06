@@ -8,11 +8,11 @@ https://github.com/stimgaklike/Duplio. План — `ROADMAP.md`, история
 
 | Файл | Что внутри |
 |---|---|
-| `dupcore.py` | логика без окна: обход папок, группы по размеру → края (2×64 КБ) → BLAKE2b целиком; группы отдаются сразу (`on_group`), самые выгодные первыми; уровни нагрузки `LOAD_LEVELS`; `check_before_delete`; `to_recycle_bin` (SHFileOperationW); `has_recycle_bin` |
-| `app.py` | главное окно, своя шапка `Tabs` (знак + QTabBar + QStackedWidget), трей, окно «в трей или закрыть», обновления (`UpdateDialog`, полоса-баннер), один экземпляр (QLocalServer), мьютекс `DuplioAppMutex` для установщика |
-| `dups_page.py` | вкладка «Дубликаты»: поток поиска → сигналы `Bridge`, список (QTreeWidget) с пакетным добавлением `_flush` раз в 400 мс, отметки `marked`, сравнение (`FileCard`), быстрый просмотр (`QuickLook`), удаление в фоне |
-| `compcore.py` | сжатие без окна: `prepare` (сжатые копии в `%LOCALAPPDATA%\Duplio\work`, фото в несколько потоков, видео по одному), `prepare_one`, `same_pixels` (байт в байт, 16 бит не округляются, альфа без предумножения), `ssim` (блоки 8×8, среднее и худший 1 %), `with_meta` (служебные блоки JPEG оригинала байт в байт), `replace` (копия рядом → сверка → оригинал в Корзину пачками → имя и даты), `set_times` |
-| `compress_page.py` | вкладка «Сжатие»: режим, подготовка в потоке → `Bridge`, список «было → стало», превью (`Previews`: фото — QImageReader, видео — кадр ffmpeg в один момент у обоих), `CompareDialog`/`PairView` (100–400 %, обе половины вместе, за край не утащить), замена |
+| `dupcore.py` | логика без окна: обход папок, группы по размеру → края (2×64 КБ) → BLAKE2b целиком; группы отдаются сразу (`on_group`), самые выгодные первыми; уровни нагрузки `LOAD_LEVELS`; `check_before_delete`; `to_recycle_bin` (SHFileOperationW, пачки `step_for` ≈ 1/40 — счётчик «N из M» идёт плавно); `has_recycle_bin` |
+| `app.py` | главное окно, своя шапка `Tabs` (знак + QTabBar + QStackedWidget), трей, окно «в трей или закрыть» (`busy_note` — что пропадёт при выходе), обновления (`UpdateDialog`, полоса-баннер), один экземпляр (QLocalServer `INSTANCE_KEY`; от установщика по нему же приходит `QUIT_REQUEST`), мьютекс `DuplioAppMutex`, перетаскивание на окно (`drop_plan` → подсказка `drop_hint` → `use_drop` / `use_folder` / `use_files`) |
+| `dups_page.py` | вкладка «Дубликаты»: поток поиска → сигналы `Bridge`, список (QTreeWidget) с пакетным добавлением `_flush` раз в 400 мс, отметки `marked`, сравнение (`FileCard`, `clear_cards`), быстрый просмотр (`QuickLook`), удаление в фоне, `use_drop` |
+| `compcore.py` | сжатие без окна: `prepare` (папка или список перетащенного — `gather`; сжатые копии в `%LOCALAPPDATA%\Duplio\work`, фото в несколько потоков, видео по одному), `prepare_one`, `same_pixels` (байт в байт, 16 бит не округляются, альфа без предумножения), `ssim` (блоки 8×8, среднее и худший 1 %; фото — на кадре вдвое, `photo_check`), `with_meta` (служебные блоки JPEG оригинала байт в байт), `jpeg_tail` (данные после картинки: запись Samsung переносится, HDR-карта / видео — файл пропускается), `replace` (копия рядом → сверка → оригинал в Корзину пачками → имя и даты), `set_times` |
+| `compress_page.py` | вкладка «Сжатие»: режим, подготовка в потоке → `Bridge`, список «было → стало», превью (`Previews`: фото — QImageReader, видео — кадр ffmpeg в один момент у обоих), `CompareDialog`/`PairView` (100–400 %, обе половины вместе, за край не утащить), замена; `use_files` — сжать только перетащенное |
 | `settings_page.py` | «Настройки» |
 | `third_party\` (не в git) | jpegtran, oxipng, ffmpeg — `python tools/fetch_tools.py` (версии и SHA-256 закреплены; качает из своего релиза `deps`, потом у авторов); в сборку кладёт `prune_build.py`. Новая версия программы: файл — в релиз `deps` (`gh release upload deps …`), размер и SHA-256 — в `fetch_tools.py` |
 | `thumbs.py` | превью: фото — QImageReader в QThreadPool; видео — кадр через QMediaPlayer+QVideoSink (без ffmpeg) |
@@ -21,8 +21,9 @@ https://github.com/stimgaklike/Duplio. План — `ROADMAP.md`, история
 | `logs.py` | журнал `%LOCALAPPDATA%\Duplio\logs`, до 3 МБ, перехват ошибок (главный поток, потоки, Qt) |
 | `settings.py` | `%APPDATA%\Duplio\settings.json`, `sanitize` — неверные значения → по умолчанию |
 | `theme.py`, `icons/` | QSS светлой/тёмной темы, значки; `tools/make_brand.py` делает значки из `branding/src` |
-| `installer.iss`, `build.bat`, `prune_build.py` | установщик Inno Setup (для текущего пользователя, без UAC), сборка PyInstaller папкой |
-| `.github/workflows/` | `tests.yml` — тесты на push; `release.yml` — по метке `vX.Y.Z` тесты → сборка → релиз |
+| `installer.iss`, `build.bat`, `prune_build.py` | установщик Inno Setup (для текущего пользователя, без UAC; открытый Duplio закрывает сам — пишет `duplio:quit` в его канал; при обновлении — «Обновление Duplio», «Обновить»; из программы `/UPDATE=1` — тихо ждёт её закрытия), сборка PyInstaller папкой |
+| `.github/workflows/` | `tests.yml` — тесты на push; `release.yml` — по метке `vX.Y.Z` тесты → сборка → релиз; упавшие тесты — аннотациями (`tests/ci_annotate.py`), их видно без входа |
+| `tests/` | `test_*.py` — unittest (в CI); `test_installer.py` — установщик и программа говорят одно (канал, текст, мьютекс, BOM); `e2e_*.py` — окно целиком на экране (не в CI) |
 
 ## Команды
 
@@ -36,7 +37,21 @@ python -X utf8 tests/e2e_english.py <папка>     # в английском �
 python tests/bench_resize.py                    # плавность (цель < 16 мс на шаг)
 python tests/bench_scan_lag.py <папка>          # отзывчивость окна во время поиска
 cmd /c "%CD%\build.bat"                         # программа + установщик в dist\ (из папки проекта, по полному пути)
+"/c/Program Files/GitHub CLI/gh.exe" run view <id> -R stimgaklike/Duplio --log-failed   # журнал упавшего CI
 ```
+
+## Сборка для владельца и выпуск
+
+- **Пробная сборка** — номер `X.Y.99` (после 1.1.0 — `1.1.99`), чтобы настоящий выпуск пришёл обновлением:
+  `version.py` меняется только на время `build.bat` и возвращается байт в байт (не коммитится). Установщик —
+  `dist\Duplio-Setup-X.Y.99.exe`, владелец ставит его поверх; старый пробный из `dist` удалять.
+- **Выпуск** — после «да» владельца: CHANGELOG «Не выпущено» → «X.Y.Z — дата», ROADMAP «Сделано», коммит,
+  `git tag vX.Y.Z && git push origin vX.Y.Z`. GitHub собирает и публикует сам (≈ 3 мин). Потом проверить
+  `updater.check()` и заменить автоматический текст релиза (там только ссылка на коммиты, а его показывает окно
+  обновления) человеческим: `gh release edit vX.Y.Z --notes-file …` (Markdown, по-русски + коротко по-английски).
+- **`gh`** вошёл как `stimgaklike`; в Git Bash его нет в PATH — звать по полному пути (выше). Только чтение;
+  отправка и метки — после «да».
+- Релиз `deps` (предварительный, не «последний») — копии jpegtran / oxipng / FFmpeg для `fetch_tools.py`.
 
 ## Правила работы
 
@@ -89,6 +104,11 @@ cmd /c "%CD%\build.bat"                         # программа + уста�
   уменьшенном вдвое. Пороги — только по настоящим снимкам (`compcore.PHOTO_SSIM_*`, там же числа калибровки).
 - **В GitHub Actions вывод Python — в cp1252:** русский `print` роняет скрипт. Скрипты сборки делают
   `sys.stdout.reconfigure(encoding="utf-8")`; проверка — `PYTHONIOENCODING=cp1252 python скрипт | cat`.
+- **Сравнение после удаления:** `current_group = None`, а потом `show_group(None)` смены не видит и оставляет
+  карточки удалённых файлов — сбрасывать через `clear_cards()`.
+- **Тесты удаления и замены кладут свои файлы в настоящую Корзину** (так проверяется именно Корзина). Сам
+  Корзину не чистить: это удаление навсегда — решение владельца. Несуществующие пути (тест счётчика) туда не попадают.
+- **Временные папки e2e** — `atexit.register(shutil.rmtree, …)` сразу после `mkdtemp`: иначе остаются при обрыве.
 - **Bash здесь съедает `\\` даже в `<<'EOF'`:** правки с обратной косой — через Write файла-скрипта или Edit.
   Так в `installer.iss` путь к каналу стал `'\.\pipe\…'` вместо `'\\.\pipe\…'` — установщик молча не мог
   попросить программу закрыться; теперь это сверяет `tests/test_installer.py` (путь, текст просьбы, мьютекс, BOM).
