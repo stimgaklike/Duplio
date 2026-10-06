@@ -229,8 +229,8 @@ EN = {
     "Выбери папку и режим и нажми «Подготовить сжатые копии».":
         "Choose a folder and a mode, then press “Prepare compressed copies”.",
     "Фото: JPEG и PNG. Видео — только «без видимых потерь».": "Photos: JPEG and PNG. Videos — only “visually lossless”.",
-    "Фото: JPEG и PNG; видео — в формат AV1 (MP4, MOV, MKV, WebM).":
-        "Photos: JPEG and PNG; videos — to AV1 (MP4, MOV, MKV, WebM).",
+    "Фото: JPEG и PNG; видео — в формат AV1 (MP4, MKV, WebM).":
+        "Photos: JPEG and PNG; videos — to AV1 (MP4, MKV, WebM).",
     "Фото: JPEG и PNG.": "Photos: JPEG and PNG.",
     "AV1 Windows 11 показывает сразу, Windows 10 — после бесплатного расширения «AV1 Video Extension» из "
     "Microsoft Store.":
@@ -284,6 +284,9 @@ EN = {
     "пиксели совпадают байт в байт — изображение то же самое":
         "pixels match byte for byte — the image is exactly the same",
     "SSIM {v}: на глаз разницы нет": "SSIM {v}: no visible difference",
+    "VMAF {v}": "VMAF {v}",
+    "MOV в AV1 не сохраняется — такие ролики пока не сжимаю": "AV1 can't be saved in MOV — such videos aren't compressed yet",
+    "VMAF {v}: на глаз разницы нет": "VMAF {v}: no visible difference",
     "Загружаю…": "Loading…",
     "Отметить все": "Mark all",
     "Заменить оригиналы": "Replace originals",
@@ -688,6 +691,7 @@ EN = {
     "видео изменилось бы — файл не трогаю": "the video would change — file left alone",
     "после очистки поля не сошлись — файл не трогаю": "fields didn't match after cleaning — file left alone",
     "убирать нечего": "nothing to remove",
+    "после сжатия кадры сдвинулись по времени — файл не трогаю": "frames moved in time after compression — file left alone",
     "нет программы ffprobe": "ffprobe is missing",
     "слишком большой файл": "file is too large",
     "служебный блок не помещается в JPEG": "the service block doesn't fit into the JPEG",

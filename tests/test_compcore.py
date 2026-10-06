@@ -329,7 +329,8 @@ class Video(Base):
         job = C.prepare_one(self.job(src), "visual")
         self.assertEqual(job.skip, "")
         self.assertLess(job.new_size, job.size * 0.5)
-        self.assertGreaterEqual(job.score, C.VIDEO_SSIM)
+        self.assertEqual(job.check, "vmaf")
+        self.assertGreaterEqual(job.score, C.VIDEO_VMAF_MEAN)
         info = C.probe(job.out)
         kinds = sorted(s["codec_type"] + ":" + s["codec_name"] for s in info["streams"])
         self.assertEqual(kinds, ["audio:aac", "video:av1"])
@@ -337,15 +338,119 @@ class Video(Base):
         self.assertAlmostEqual(float(info["format"]["duration"]), float(C.probe(src)["format"]["duration"]),
                                delta=0.1)
 
+    def vfr_video(self, name):
+        """Переменная частота, как ночью у Galaxy: кадры 30–49 выброшены — провал 0,67 с посреди ролика,
+        и время кадров не на ровной сетке (у Galaxy 0,016656 вместо 1/60) — сдвиг 0–8 мс."""
+        path = self.p(name)
+        subprocess.run([C.tool("ffmpeg"), "-v", "error", "-y", "-f", "lavfi",
+                        "-i", "testsrc2=size=640x360:rate=30:duration=3", "-f", "lavfi", "-i", "sine=duration=3",
+                        "-vf", "select='lt(n\\,30)+gte(n\\,50)',settb=1/90000,setpts=PTS+0.004*mod(N\\,3)/TB",
+                        "-fps_mode", "passthrough", "-enc_time_base", "1/90000", "-video_track_timescale", "90000",
+                        "-c:v", "libopenh264",
+                        "-b:v", "6M", "-c:a", "aac", path], check=True, creationflags=C.CREATE_NO_WINDOW)
+        times = C.frame_times(path)
+        self.assertEqual(len(times), 70)
+        self.assertGreater(max(b - a for a, b in zip(times, times[1:])), 0.6)    # провал действительно есть
+        self.assertAlmostEqual(times[1], 1 / 30 + 0.004, places=4)              # и время не на сетке 1/30
+        return path
+
+    def test_variable_frame_rate_keeps_frame_times(self):
+        src = self.vfr_video("night.mp4")
+        job = C.prepare_one(self.job(src), "visual")
+        self.assertEqual(job.skip, "")
+        self.assertTrue(C.same_timing(src, job.out))
+        self.assertEqual(C.frame_times(job.out), C.frame_times(src))
+        self.assertGreaterEqual(job.score, C.VIDEO_VMAF_MEAN)
+
+    def test_frames_moved_in_time_are_caught(self):
+        src = self.vfr_video("night2.mp4")
+        even = self.p("even.mp4")                       # те же кадры, но на ровной сетке 1/30 с
+        subprocess.run([C.tool("ffmpeg"), "-v", "error", "-y", "-i", src, "-fps_mode", "passthrough",
+                        "-vf", "setpts=N/30/TB", "-c:v", "libopenh264", "-an", even],
+                       check=True, creationflags=C.CREATE_NO_WINDOW)
+        self.assertEqual(len(C.frame_times(even)), 70)
+        self.assertFalse(C.same_timing(src, even))
+        self.assertTrue(C.same_timing(src, src))
+        real = C.same_timing
+        try:                                            # сверка правда стоит на пути сжатого файла
+            C.same_timing = lambda a, b: False
+            job = C.prepare_one(self.job(src), "visual")
+        finally:
+            C.same_timing = real
+        self.assertEqual((job.skip, job.out), ("после сжатия кадры сдвинулись по времени — файл не трогаю", ""))
+
+    def encodes(self, src, scores, **limits):
+        """Сжать src, подменив VMAF ответами scores по очереди; вернуть (задание, CRF всех попыток)."""
+        crfs, real_run, real_vmaf = [], C._run, C.video_vmaf
+        answers = iter(scores)
+
+        def run(args, *a, **k):
+            if "libsvtav1" in args:
+                crfs.append(int(args[args.index("-crf") + 1]))
+            return real_run(args, *a, **k)
+        old = {k: getattr(C, k) for k in limits}
+        try:
+            C._run, C.video_vmaf = run, lambda *a, **k: next(answers)
+            for k, v in limits.items():
+                setattr(C, k, v)
+            job = C.prepare_one(self.job(src), "visual")
+        finally:
+            C._run, C.video_vmaf = real_run, real_vmaf
+            for k, v in old.items():
+                setattr(C, k, v)
+        return job, crfs
+
+    def test_ladder_takes_first_step_that_passes(self):
+        src = make_video(self.p("clip.mp4"), seconds=1, extra=("-b:v", "6M"))
+        job, crfs = self.encodes(src, [(90.0, 80.0), (94.0, 85.0), (96.0, 92.0)])   # 36 и 32 не прошли
+        self.assertEqual(job.skip, "")
+        self.assertEqual(crfs, [36, 32, 28])
+        self.assertEqual((job.how, job.check, job.score), ("AV1, качество CRF 28", "vmaf", 96.0))
+        job, crfs = self.encodes(src, [(97.0, 95.0)])                              # день: с первой ступени
+        self.assertEqual((crfs, job.how), ([36], "AV1, качество CRF 36"))
+
+    def test_mean_and_worst_frames_both_matter(self):
+        src = make_video(self.p("clip.mp4"), seconds=1, extra=("-b:v", "6M"))
+        low_mean = [(C.VIDEO_VMAF_MEAN - 0.1, 99.0)] * 4
+        low_worst = [(99.0, C.VIDEO_VMAF_LOW - 0.1)] * 4
+        for scores in (low_mean, low_worst):
+            job, crfs = self.encodes(src, scores)
+            self.assertEqual((job.skip, job.out, crfs), ("без видимых потерь не сжимается", "", [36, 32, 28, 24]))
+        self.assertEqual(os.listdir(self.work), [])
+
+    def test_no_gain_stops_the_ladder(self):
+        src = make_video(self.p("clip.mp4"), seconds=1, extra=("-b:v", "6M"))
+        job, crfs = self.encodes(src, [], MIN_GAIN={"lossless": 0.02, "visual": 0.999})
+        self.assertEqual((job.skip, crfs), ("почти не уменьшился", [36]))       # ниже — файл только больше
+
     def test_below_threshold_is_refused(self):
         src = make_video(self.p("clip.mp4"), seconds=1, extra=("-b:v", "6M"))
-        old = C.VIDEO_SSIM
-        C.VIDEO_SSIM = 0.99999                      # недостижимо: проверяем, что порог вообще соблюдается
+        old = C.VIDEO_VMAF_MEAN
+        C.VIDEO_VMAF_MEAN = 101                     # недостижимо: настоящий VMAF, порог вообще соблюдается
         try:
             job = C.prepare_one(self.job(src), "visual")
         finally:
-            C.VIDEO_SSIM = old
+            C.VIDEO_VMAF_MEAN = old
         self.assertEqual((job.skip, job.out), ("без видимых потерь не сжимается", ""))
+        self.assertEqual(os.listdir(self.work), [])
+
+    def test_vmaf_sees_damage(self):
+        src = make_video(self.p("clip.mp4"), seconds=2, extra=("-b:v", "6M"))
+        bad = self.p("bad.mp4")                         # испорчены только первые 0,4 с — порча в одном месте
+        subprocess.run([C.tool("ffmpeg"), "-v", "error", "-y", "-i", src, "-vf", "gblur=sigma=4:enable='lt(t,0.4)'",
+                        "-fps_mode", "passthrough", "-c:v", "libopenh264", "-b:v", "6M", "-an", bad],
+                       check=True, creationflags=C.CREATE_NO_WINDOW)
+        good_mean, good_low = C.video_vmaf(src, src)
+        bad_mean, bad_low = C.video_vmaf(src, bad)
+        self.assertGreater(good_mean, 99)
+        self.assertLess(bad_low, C.VIDEO_VMAF_LOW)       # худшие кадры порчу видят…
+        self.assertGreater(bad_mean - bad_low, 15)       # …хотя по среднему она тонет
+        self.assertFalse([f for f in os.listdir(self.root) if f.startswith("vmaf_")])   # журнал убран
+
+    def test_mov_is_left_alone_with_clear_reason(self):
+        src = make_video(self.p("IMG_0685.MOV"), seconds=1, extra=("-b:v", "6M"))      # как у iPhone
+        job = C.prepare_one(self.job(src), "visual")
+        self.assertEqual((job.skip, job.out), ("MOV в AV1 не сохраняется — такие ролики пока не сжимаю", ""))
         self.assertEqual(os.listdir(self.work), [])
 
     def test_av1_is_left_alone(self):

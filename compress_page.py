@@ -44,8 +44,8 @@ def pct(part, whole):
     return f"{v}\u00a0%" if i18n.LANG == "ru" else f"{v}%"      # по-русски — через неразрывный пробел
 
 
-def score_text(v):
-    s = f"{v:.3f}"
+def score_text(v, digits=3):
+    s = f"{v:.{digits}f}"
     return s.replace(".", ",") if i18n.LANG == "ru" else s
 
 
@@ -77,6 +77,8 @@ def check_text(job):
         return tr("байт в байт")
     if job.check == "ssim":
         return tr("SSIM {v}", v=score_text(job.score))
+    if job.check == "vmaf":
+        return tr("VMAF {v}", v=score_text(job.score, 1))
     return ""
 
 
@@ -699,7 +701,7 @@ class CompressPage(QWidget):
         if lossless:
             note = tr("Фото: JPEG и PNG. Видео — только «без видимых потерь».")
         elif "video" in kinds:
-            note = tr("Фото: JPEG и PNG; видео — в формат AV1 (MP4, MOV, MKV, WebM).")
+            note = tr("Фото: JPEG и PNG; видео — в формат AV1 (MP4, MKV, WebM).")
         else:
             note = tr("Фото: JPEG и PNG.")
         self.kinds_note.setText(note)
@@ -1070,6 +1072,8 @@ class CompressPage(QWidget):
             how += " · " + tr("пиксели совпадают байт в байт — изображение то же самое")
         elif job.check == "ssim":
             how += " · " + tr("SSIM {v}: на глаз разницы нет", v=score_text(job.score))
+        elif job.check == "vmaf":
+            how += " · " + tr("VMAF {v}: на глаз разницы нет", v=score_text(job.score, 1))
         self.cmp_how.setText(how)
         self._show_pictures()
 

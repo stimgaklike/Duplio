@@ -310,7 +310,7 @@ check(skipped.get("маленькое.jpg") == "уже сжат сильно —
       f"слабый JPEG не тронут: {skipped.get('маленькое.jpg')}")
 check(c.btn_skipped.isVisible() and c.btn_skipped.text() == f"Не сжаты: {len(c.skipped)}", c.btn_skipped.text())
 vid = next(j for j in c.ready if j.is_video)
-check(c.items[vid.path].text(5).startswith("SSIM "), "у видео проверка — SSIM: " + c.items[vid.path].text(5))
+check(c.items[vid.path].text(5).startswith("VMAF "), "у видео проверка — VMAF: " + c.items[vid.path].text(5))
 c.tree.setCurrentItem(c.items[vid.path])
 wait(lambda: c.pic_old.img is not None and c.pic_new.img is not None, 20)
 pump(0.3)

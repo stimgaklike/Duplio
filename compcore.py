@@ -2,7 +2,7 @@
 
 Два шага. «Подготовить» — сжатые копии складываются в рабочую папку, оригиналы не трогаются;
 каждая копия проверена: в строгом режиме пиксели совпадают байт в байт, в режиме «без видимых
-потерь» — числом SSIM. «Заменить» — оригинал уходит в Корзину, на его место встаёт сжатый файл
+потерь» — числом (фото — SSIM, видео — VMAF). «Заменить» — оригинал уходит в Корзину, на его место встаёт сжатый файл
 с теми же датами. Тип файла (расширение) не меняется никогда.
 """
 
@@ -10,7 +10,6 @@ import ctypes
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -48,9 +47,17 @@ PHOTO_SSIM_MEAN = 0.985
 PHOTO_SSIM_LOW = 0.96
 PHOTO_SSIM_FLOOR = 0.80
 # Видео: AV1 (SVT-AV1). CRF — качество (меньше — лучше), preset — скорость (больше — быстрее).
-VIDEO_CRF = 28
+# «Лестница»: CRF по очереди, берётся первый, что прошёл проверку VMAF (оценка «видно ли разницу» от Netflix;
+# для 4K — модель vmaf_4k). Средний SSIM у видео почти не меняется (0,975–0,985 от CRF 24 до 36), а VMAF и
+# глаз видят разницу — по SSIM не отсечь. Калибровка 7.10.2026 на роликах владельца (Galaxy S24 Ultra 4K60,
+# H.264 4K, iPhone 720p), куски по 8 с: день — CRF 36 проходит (VMAF 95,3, худший 1 % 92,9, ≈ 11 % размера);
+# трудная ночь — только CRF 24 (95,4 / 88,9; ≈ 78 %); владелец разницы CRF 36 с оригиналом не увидел даже
+# на вырезках 100 %, при 200 % — едва (шерсть, ночное зерно чуть мягче).
+VIDEO_CRFS = (36, 32, 28, 24)
 VIDEO_PRESET = 8
-VIDEO_SSIM = 0.97
+VIDEO_VMAF_MEAN = 93.0
+VIDEO_VMAF_LOW = 88.0             # худший 1 % кадров
+VIDEO_VMAF_SUBSAMPLE = 4          # каждый 4-й кадр: целый 4K-ролик 23 с — 45 с вместо 100, среднее то же (94,66 / 94,69)
 
 WORK = os.path.join(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(), "Duplio", "work")
 RESERVE = 2 * 1024 ** 3          # столько места оставляем свободным на диске рабочей папки
@@ -84,7 +91,7 @@ def _env():
     return env
 
 
-def _run(args, cancel=None, gentle=False, on_line=None, ok_codes=(0,), src=None, dst=None):
+def _run(args, cancel=None, gentle=False, on_line=None, ok_codes=(0,), src=None, dst=None, cwd=None):
     """Запустить программу без окна; cancel — остановить её. Возвращает stderr; ошибка — Skip.
 
     src / dst — файлы, которые программа читает со входа и пишет на выход: так ей не нужно знать их
@@ -98,7 +105,7 @@ def _run(args, cancel=None, gentle=False, on_line=None, ok_codes=(0,), src=None,
     try:
         p = subprocess.Popen(args, stdin=fin or subprocess.DEVNULL,
                              stdout=fout or (subprocess.PIPE if on_line else subprocess.DEVNULL),
-                             stderr=err_file, creationflags=flags, env=_env())
+                             stderr=err_file, creationflags=flags, env=_env(), cwd=cwd)
         reader = None
         if on_line:
             def pump():
@@ -476,48 +483,103 @@ def _video(job, dst, cancel, gentle, threads, on_part):
         duration = 0
     deep = "10" in v.get("pix_fmt", "") or "12" in v.get("pix_fmt", "") or int(v.get("bits_per_raw_sample") or 8) > 8
     ext = os.path.splitext(job.path)[1].lower()
-    args = [tool("ffmpeg"), "-hide_banner", "-nostdin", "-y", "-i", job.path,
-            "-map", "0:V:0", "-map", "0:a?", "-map_metadata", "0", "-map_chapters", "0",
-            "-c:v", "libsvtav1", "-crf", str(VIDEO_CRF), "-preset", str(VIDEO_PRESET),
-            "-svtav1-params", f"lp={threads}",
-            "-pix_fmt", "yuv420p10le" if deep else "yuv420p", "-c:a", "copy"]
-    if ext in (".mp4", ".m4v", ".mov"):
-        args += ["-movflags", "+faststart+use_metadata_tags"]
-    args += ["-progress", "pipe:1", "-nostats", dst]
+    if ext == ".mov":                     # ffmpeg: «av1 only supported in MP4 and AVIF»; расширение не меняем
+        raise Skip("MOV в AV1 не сохраняется — такие ролики пока не сжимаю")
+    n_audio =sum(s.get("codec_type") == "audio" for s in info.get("streams", []))
+    four_k = int(v.get("width") or 0) * int(v.get("height") or 0) >= 0.9 * 3840 * 2160
+    steps = len(VIDEO_CRFS)
+    for step, crf in enumerate(VIDEO_CRFS):
+        args = [tool("ffmpeg"), "-hide_banner", "-nostdin", "-y", "-i", job.path,
+                "-map", "0:V:0", "-map", "0:a?", "-map_metadata", "0", "-map_chapters", "0",
+                "-c:v", "libsvtav1", "-crf", str(crf), "-preset", str(VIDEO_PRESET),
+                "-svtav1-params", f"lp={threads}",
+                "-pix_fmt", "yuv420p10le" if deep else "yuv420p", "-c:a", "copy",
+                # Телефоны снимают с переменной частотой (ночью Galaxy пропускает кадры: шаг от 1/60 до 1/10 с).
+                # Без этого кадры ложатся на ровную сетку 1/60: движение дёргается, звук расходится, а
+                # проверка сравнивает кадры со сдвигом и бракует хороший ролик (ночной 4K60 — SSIM 0,930 вместо 0,982).
+                "-fps_mode", "passthrough", "-enc_time_base", "demux"]
+        if ext in (".mp4", ".m4v", ".mov"):
+            args += ["-movflags", "+faststart+use_metadata_tags"]
+        args += ["-progress", "pipe:1", "-nostats", dst]
 
-    def line(s):
-        if s.startswith("out_time_us=") and duration > 0:
-            try:
-                on_part(min(1.0, int(s.split("=", 1)[1]) / 1e6 / duration) * 0.85)
-            except ValueError:
-                pass
-    _run(args, cancel, gentle, on_line=line)
-    new = probe(dst)
-    nv = _video_stream(new)
+        def line(s, step=step):
+            if s.startswith("out_time_us=") and duration > 0:
+                try:
+                    f = min(1.0, int(s.split("=", 1)[1]) / 1e6 / duration)
+                    on_part((step + f * 0.6) / steps)
+                except ValueError:
+                    pass
+        _run(args, cancel, gentle, on_line=line)
+        new = probe(dst)
+        nv = _video_stream(new)
+        try:
+            new_dur = float(new.get("format", {}).get("duration") or 0)
+        except ValueError:
+            new_dur = 0
+        n_audio_new = sum(s.get("codec_type") == "audio" for s in new.get("streams", []))
+        if not nv or n_audio != n_audio_new or (duration and abs(new_dur - duration) > max(0.5, duration * 0.01)):
+            raise Skip("после сжатия видео не сходится с оригиналом (длина или звук)")
+        if not same_timing(job.path, dst):
+            raise Skip("после сжатия кадры сдвинулись по времени — файл не трогаю")
+        if os.path.getsize(dst) > job.size * (1 - MIN_GAIN["visual"]):
+            raise Skip("почти не уменьшился")         # ступени ниже дадут файл ещё больше — дальше не пробуем
+        mean, low = video_vmaf(job.path, dst, four_k, cancel, gentle, threads)
+        job.score = mean
+        on_part((step + 1) / steps)
+        if mean >= VIDEO_VMAF_MEAN and low >= VIDEO_VMAF_LOW:
+            on_part(1.0)
+            job.how, job.check = tr("AV1, качество CRF {crf}", crf=crf), "vmaf"
+            return
+    raise Skip("без видимых потерь не сжимается")
+
+
+def frame_times(path):
+    """Время показа каждого кадра видео (по пакетам — без распаковки, быстро), по порядку."""
+    out = subprocess.run([tool("ffprobe"), "-v", "error", "-select_streams", "V:0", "-show_entries", "packet=pts_time",
+                          "-of", "csv=p=0", path], capture_output=True, creationflags=CREATE_NO_WINDOW, env=_env())
+    times = []
+    for x in out.stdout.decode("utf-8", "replace").split():
+        try:
+            times.append(float(x.strip(",")))
+        except ValueError:
+            pass
+    return sorted(times)
+
+
+def same_timing(a, b, tolerance=0.002):
+    """У сжатого столько же кадров, и каждый показывается в то же время, что в оригинале (± 2 мс)."""
+    ta, tb = frame_times(a), frame_times(b)
+    if not ta or len(ta) != len(tb):
+        return False
+    a0, b0 = ta[0], tb[0]
+    return all(abs((x - a0) - (y - b0)) <= tolerance for x, y in zip(ta, tb))
+
+
+def video_vmaf(orig, new, four_k=False, cancel=None, gentle=False, threads=4):
+    """VMAF сжатого видео против оригинала по каждому VIDEO_VMAF_SUBSAMPLE-му кадру: (среднее, худший 1 %).
+
+    Журнал libvmaf пишет по ANSI-имени (кириллица превращается в «РґРµРЅСЊ»), поэтому имя — латиницей,
+    а папка задаётся рабочей (cwd).
+    """
+    folder = os.path.dirname(os.path.abspath(new))
+    log = f"vmaf_{os.getpid()}_{threading.get_ident()}.json"
+    model = "vmaf_4k_v0.6.1" if four_k else "vmaf_v0.6.1"
     try:
-        new_dur = float(new.get("format", {}).get("duration") or 0)
-    except ValueError:
-        new_dur = 0
-    n_audio = sum(s.get("codec_type") == "audio" for s in info.get("streams", []))
-    n_audio_new = sum(s.get("codec_type") == "audio" for s in new.get("streams", []))
-    if not nv or n_audio != n_audio_new or (duration and abs(new_dur - duration) > max(0.5, duration * 0.01)):
-        raise Skip("после сжатия видео не сходится с оригиналом (длина или звук)")
-    job.score = video_ssim(job.path, dst, cancel, gentle, threads)
-    on_part(1.0)
-    job.how, job.check = tr("AV1, качество CRF {crf}", crf=VIDEO_CRF), "ssim"
-    if job.score < VIDEO_SSIM:
-        raise Skip("без видимых потерь не сжимается")
-
-
-def video_ssim(a, b, cancel=None, gentle=False, threads=4):
-    """Средний SSIM всех кадров двух видео (ffmpeg, фильтр ssim)."""
-    err = _run([tool("ffmpeg"), "-hide_banner", "-nostdin", "-threads", str(threads), "-i", b, "-i", a,
-                "-lavfi", "[0:V:0]setpts=PTS-STARTPTS[x];[1:V:0]setpts=PTS-STARTPTS[y];[x][y]ssim",
-                "-f", "null", "-"], cancel, gentle)
-    m = re.findall(r"All:([0-9.]+)", err)
-    if not m:
+        _run([tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", new, "-i", orig, "-lavfi",
+              "[0:V:0]setpts=PTS-STARTPTS[d];[1:V:0]setpts=PTS-STARTPTS[r];"
+              f"[d][r]libvmaf=model=version={model}:n_threads={threads}:n_subsample={VIDEO_VMAF_SUBSAMPLE}:"
+              f"log_fmt=json:log_path={log}", "-f", "null", "-"], cancel, gentle, cwd=folder)
+        with open(os.path.join(folder, log), encoding="utf-8") as f:
+            data = json.load(f)
+        frames = sorted(fr["metrics"]["vmaf"] for fr in data["frames"])
+        return float(data["pooled_metrics"]["vmaf"]["mean"]), frames[len(frames) // 100]
+    except (OSError, ValueError, KeyError, IndexError):
         raise Skip("не удалось сравнить видео с оригиналом")
-    return float(m[-1])
+    finally:
+        try:
+            os.remove(os.path.join(folder, log))
+        except OSError:
+            pass
 
 
 def prepare_one(job, mode, cancel=None, gentle=False, threads=1, on_part=lambda f: None):
