@@ -4,7 +4,9 @@ python tests/bench_resize.py [групп]
 Плавно — это меньше ~16 мс на шаг (60 кадров в секунду). Старое окно на tkinter давало ~190 мс.
 """
 
+import atexit
 import os
+import shutil
 import statistics
 import sys
 import tempfile
@@ -14,6 +16,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import settings  # noqa: E402
 
 tmp_cfg = tempfile.mkdtemp(prefix="dup_cfg_")
+
+atexit.register(shutil.rmtree, tmp_cfg, True)          # убрать и при обрыве прогона
 settings.DIR, settings.PATH = tmp_cfg, os.path.join(tmp_cfg, "settings.json")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402

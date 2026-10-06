@@ -5,6 +5,7 @@
 (это свои тестовые файлы во временной папке). Настройки — во временной папке.
 """
 
+import atexit
 import os
 import shutil
 import sys
@@ -15,6 +16,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import settings  # noqa: E402
 
 tmp_cfg = tempfile.mkdtemp(prefix="dup_cfg_")
+
+atexit.register(shutil.rmtree, tmp_cfg, True)          # убрать и при обрыве прогона
 settings.DIR, settings.PATH = tmp_cfg, os.path.join(tmp_cfg, "settings.json")
 
 from PySide6.QtCore import QPointF, Qt  # noqa: E402
@@ -33,7 +36,9 @@ from test_compcore import make_video, photo, save_jpeg  # noqa: E402
 shots = sys.argv[1] if len(sys.argv) > 1 else tempfile.gettempdir()
 mode = sys.argv[2] if len(sys.argv) > 2 else "system"
 root = tempfile.mkdtemp(prefix="dup_cmp_e2e_")
+atexit.register(shutil.rmtree, root, True)          # убрать и при обрыве прогона
 work = tempfile.mkdtemp(prefix="dup_cmp_work_")
+atexit.register(shutil.rmtree, work, True)          # убрать и при обрыве прогона
 compcore.WORK = work
 
 

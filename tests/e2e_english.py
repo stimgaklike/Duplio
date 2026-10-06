@@ -3,6 +3,7 @@
 Запуск: python tests/e2e_english.py [папка_для_снимков]
 """
 
+import atexit
 import os
 import re
 import shutil
@@ -16,6 +17,7 @@ import settings  # noqa: E402
 
 i18n.set_lang("en")
 tmp_cfg = tempfile.mkdtemp(prefix="dup_cfg_")
+atexit.register(shutil.rmtree, tmp_cfg, True)          # убрать и при обрыве прогона
 settings.DIR, settings.PATH = tmp_cfg, os.path.join(tmp_cfg, "settings.json")
 
 from PySide6.QtWidgets import (QAbstractButton, QApplication, QComboBox, QLabel, QLineEdit, QMenu,  # noqa: E402
@@ -30,6 +32,7 @@ CYR = re.compile("[А-Яа-яЁё]")
 ALLOWED = {"Русский"}       # название языка пишут на нём самом — чтобы найти свой язык в чужом интерфейсе
 shots = sys.argv[1] if len(sys.argv) > 1 else tempfile.gettempdir()
 root = tempfile.mkdtemp(prefix="dup_en_")
+atexit.register(shutil.rmtree, root, True)          # убрать и при обрыве прогона
 said = []
 ui_util.ask_yes_no = lambda parent, text, **k: said.append(text) or True
 ui_util.info = lambda parent, text: said.append(text)
@@ -134,7 +137,10 @@ import compress_page  # noqa: E402
 from test_compcore import make_video, photo, save_jpeg  # noqa: E402
 
 compcore.WORK = tempfile.mkdtemp(prefix="dup_en_work_")
+
+atexit.register(shutil.rmtree, compcore.WORK, True)          # убрать и при обрыве прогона
 croot = tempfile.mkdtemp(prefix="dup_en_cmp_")
+atexit.register(shutil.rmtree, croot, True)          # убрать и при обрыве прогона
 save_jpeg(photo(noise=0), os.path.join(croot, "a.jpg"), quality=97)
 save_jpeg(photo(400, 300, seed=3), os.path.join(croot, "low.jpg"), quality=80)
 make_video(os.path.join(croot, "v.mp4"), seconds=1, extra=("-b:v", "6M"))
