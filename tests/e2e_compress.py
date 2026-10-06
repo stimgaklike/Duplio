@@ -316,6 +316,35 @@ shot("qt_compress_visual.png")
 c.show_skipped()
 check(any(a[0] == "info" and "уже сжат сильно" in a[1] for a in answers), "список несжатых с причинами")
 
+# ---------- установщик просит закрыться (тот же канал, что у второго запуска)
+from PySide6.QtCore import QByteArray  # noqa: E402
+from PySide6.QtNetwork import QLocalSocket  # noqa: E402
+
+app.INSTANCE_KEY = f"Duplio-e2e-{os.getpid()}"            # не настоящий канал: там может слушать открытый Duplio
+server = app.listen(w)
+quits, opened = [], []
+real_quit, real_open = w.quit_app, w.open_folder
+w.quit_app = lambda *a, **k: quits.append(1)
+w.open_folder = lambda f: opened.append(f)
+
+
+def send(data):
+    sock = QLocalSocket()
+    sock.connectToServer(app.INSTANCE_KEY)
+    sock.waitForConnected(1000)
+    sock.write(QByteArray(data))
+    sock.waitForBytesWritten(1000)
+    sock.disconnectFromServer()
+    pump(0.5)
+
+
+send(app.QUIT_REQUEST.encode())
+check((quits, opened) == ([1], []), f"просьба установщика закрывает программу ({quits}, {opened})")
+send(root.encode("utf-8"))
+check((quits, opened) == ([1], [root]), f"а папка от второго запуска — подставляется, не закрывает ({quits}, {opened})")
+w.quit_app, w.open_folder = real_quit, real_open
+server.close()
+
 # ---------- окно минимального размера: ничего не вылезает
 w.resize(w.minimumWidth(), w.minimumHeight())
 pump(0.5)

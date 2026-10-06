@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 
-from PySide6.QtCore import QByteArray, QObject, QProcess, Qt, Signal
+from PySide6.QtCore import QByteArray, QObject, QProcess, QTimer, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QProgressBar,
@@ -30,6 +30,7 @@ from version import VERSION
 INSTANCE_KEY = "Duplio-" + getpass.getuser()
 # По этому имени установщик понимает, что программа открыта, и ждёт её закрытия.
 APP_MUTEX = "DuplioAppMutex"
+QUIT_REQUEST = "duplio:quit"      # установщик просит закрыться перед установкой (installer.iss); пути с «:» не бывает
 CHECK_EVERY = 20 * 3600         # автоматическая проверка обновлений — не чаще раза в ~сутки
 
 
@@ -511,7 +512,15 @@ def listen(win):
         conn = server.nextPendingConnection()
 
         def read():
-            win.open_folder(bytes(conn.readAll()).decode("utf-8", "replace"))
+            text = bytes(conn.readAll()).decode("utf-8", "replace")
+            if not text:                              # второй вызов после того, как всё уже прочитано
+                return
+            if text == QUIT_REQUEST:
+                # Как «Выход» из трея: если идёт поиск или сжатие — программа спросит, и можно отказаться.
+                log.info("Установщик просит закрыть программу")
+                QTimer.singleShot(0, win.quit_app)
+            else:
+                win.open_folder(text)
         conn.readyRead.connect(read)
         conn.disconnected.connect(conn.deleteLater)
         if conn.bytesAvailable() or conn.waitForReadyRead(300):
