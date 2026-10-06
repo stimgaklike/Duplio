@@ -39,15 +39,35 @@ for _ in range(30):
     time.sleep(0.01)
 
 W, H = w.width(), w.height()
-times = []
-for step in range(60):
-    k = step if step < 30 else 60 - step
-    t = time.perf_counter()
-    w.resize(W - k * 10, H - k * 5)
+
+
+def bench(title):
+    times = []
+    for step in range(60):
+        k = step if step < 30 else 60 - step
+        t = time.perf_counter()
+        w.resize(W - k * 10, H - k * 5)
+        qapp.processEvents()
+        w.repaint()
+        times.append((time.perf_counter() - t) * 1000)
+    times.sort()
+    print(f"{title}: медиана {statistics.median(times):.1f} мс, 90% {times[int(len(times) * .9)]:.1f} мс, "
+          f"худший {times[-1]:.1f} мс на шаг")
+
+
+bench(f"Дубликаты, групп {n_groups}")
+# «Сжатие» со списком готовых копий (файлов нет — превью пустые, раскладка та же).
+import compcore  # noqa: E402
+c = w.compress
+c.scan_root = root
+c.ready = [compcore.Job(os.path.join(root, f"папка{i % 7}", f"IMG_{i:04d}.jpg"), 4_000_000 + i, now, out="x",
+                        new_size=3_000_000, how="перепаковка", check="pixels") for i in range(n_groups)]
+c.marked = {j.path for j in c.ready}
+c.refresh()
+w.tabs.setCurrentWidget(c)
+for _ in range(30):
     qapp.processEvents()
-    w.repaint()
-    times.append((time.perf_counter() - t) * 1000)
-w.close()
-times.sort()
-print(f"групп {n_groups}: медиана {statistics.median(times):.1f} мс, 90% {times[int(len(times) * .9)]:.1f} мс, "
-      f"худший {times[-1]:.1f} мс на шаг")
+    time.sleep(0.01)
+bench(f"Сжатие, файлов {n_groups}")
+c.marked.clear()                          # иначе выход спросит про незаменённые копии
+w.quit_app()                              # не close(): крестик теперь спрашивает «в трей или закрыть»

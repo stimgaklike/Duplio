@@ -324,6 +324,17 @@ class SettingsFile(unittest.TestCase):
             settings.PATH = saved
             shutil.rmtree(d, ignore_errors=True)
 
+    def test_bad_compress_values_fall_back_to_defaults(self):
+        import settings
+        cfg = settings.sanitize(dict(settings.DEFAULTS, compress_mode="сжать всё", compress_kinds=["photo", "audio"],
+                                     compress_folder=42))
+        self.assertEqual((cfg["compress_mode"], cfg["compress_kinds"], cfg["compress_folder"]),
+                         ("lossless", ["photo", "video"], ""))
+        good = settings.sanitize(dict(settings.DEFAULTS, compress_mode="visual", compress_kinds=["video"],
+                                      compress_folder=r"E:\Фото"))
+        self.assertEqual((good["compress_mode"], good["compress_kinds"], good["compress_folder"]),
+                         ("visual", ["video"], r"E:\Фото"))
+
     def test_old_setting_close_to_tray_false_means_quit(self):
         import json
         import settings

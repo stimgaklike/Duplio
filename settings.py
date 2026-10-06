@@ -1,4 +1,8 @@
-"""Настройки программы — один маленький файл %APPDATA%\\Duplio\\settings.json. Других файлов программа не пишет."""
+"""Настройки программы — один маленький файл %APPDATA%\\Duplio\\settings.json.
+
+Ещё программа пишет журнал (%LOCALAPPDATA%\\Duplio\\logs) и, пока готовит сжатие, — сжатые копии
+в %LOCALAPPDATA%\\Duplio\\work (папка очищается при каждой подготовке и при выходе).
+"""
 
 import json
 import os
@@ -19,6 +23,9 @@ DEFAULTS = {
     "lang": "auto",              # auto / ru / en
     "check_updates": True,       # проверять обновления при запуске (не чаще раза в сутки)
     "last_update_check": 0,
+    "compress_mode": "lossless",  # lossless — строго без потерь, visual — без видимых потерь
+    "compress_kinds": ["photo", "video"],
+    "compress_folder": "",
 }
 
 
@@ -42,6 +49,7 @@ ALLOWED = {
     "keep_rule": {"oldest", "newest", "shortest"},
     "lang": {"auto", "ru", "en"},
     "close_action": {"ask", "tray", "quit"},
+    "compress_mode": {"lossless", "visual"},
 }
 KINDS = {"photo", "video", "audio", "docs", "archives", "other"}
 
@@ -57,8 +65,12 @@ def sanitize(data):
     for key in ("tray_hint_shown", "check_updates"):
         if not isinstance(data.get(key), bool):
             data[key] = DEFAULTS[key]
-    if not isinstance(data.get("last_folder"), str):
-        data["last_folder"] = ""
+    ck = data.get("compress_kinds")
+    if not isinstance(ck, list) or not set(ck) <= {"photo", "video"}:
+        data["compress_kinds"] = list(DEFAULTS["compress_kinds"])
+    for key in ("last_folder", "compress_folder"):
+        if not isinstance(data.get(key), str):
+            data[key] = ""
     if not isinstance(data.get("last_update_check"), (int, float)):
         data["last_update_check"] = 0
     return data

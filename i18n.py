@@ -209,20 +209,170 @@ EN = {
     "Превью недоступно": "No preview",
     # ---- вкладка «Сжатие»
     "Сжатие фото и видео": "Photo and video compression",
-    "Скоро здесь можно будет уменьшить размер фото и видео. Пока вкладка показывает, как это будет устроено.":
-        "Soon you'll be able to make photos and videos smaller here. For now this tab shows how it will work.",
     "Строго без потерь": "Strictly lossless",
-    "Для фото JPEG и PNG: файл пересобирается так, что ни один пиксель не меняется — открой до и после, "
-    "и они совпадут до последнего бита изображения. Экономия скромная: примерно 5–20%.":
-        "For JPEG and PNG photos: the file is rebuilt so that not a single pixel changes — open it before and after "
-        "and the image matches to the last bit. Savings are modest: about 5–20%.",
     "Без видимых потерь": "Visually lossless",
-    "Для фото и видео: пережатие в современные форматы. На глаз разницу не увидеть, а места освобождается "
-    "в разы больше — обычно 30–70%. Перед заменой программа покажет «было / стало» рядом, а оригинал "
-    "отправит в Корзину.":
-        "For photos and videos: re-encoding into modern formats. You won't see the difference, and it frees much "
-        "more space — usually 30–70%. Before replacing, the app shows “before / after” side by side and moves "
-        "the original to the Recycle Bin.",
+    "Фото JPEG и PNG пересобираются без изменения пикселей — каждый файл сверяется байт в байт. "
+    "Экономия: обычно 5–20 %.":
+        "JPEG and PNG photos are rebuilt without changing a single pixel — every file is checked byte for byte. "
+        "Savings: usually 5–20%.",
+    "Фото JPEG — качество 85–90, видео — AV1, PNG — без потерь. На глаз разницы нет, и это "
+    "проверяется числом. Экономия: обычно 30–70 %.":
+        "JPEG photos at quality 85–90, videos in AV1, PNG losslessly. You can't see the difference, and that "
+        "is checked with a number. Savings: usually 30–70%.",
+    "Здесь появятся сжатые копии: было → стало.\n\nПрограмма уменьшает файлы, не меняя их тип. "
+    "Сначала готовит и проверяет сжатые копии — оригиналы не трогает, пока ты не нажмёшь «Заменить».":
+        "Compressed copies will appear here: before → after.\n\nThe app makes files smaller without changing their "
+        "type. It first prepares and checks compressed copies — originals stay untouched until you press “Replace”.",
+    "Режим": "Mode",
+    "Что сжимать": "Compress",
+    "Подготовить сжатые копии": "Prepare compressed copies",
+    "Выбери папку и режим и нажми «Подготовить сжатые копии».":
+        "Choose a folder and a mode, then press “Prepare compressed copies”.",
+    "Фото: JPEG и PNG. Видео — только «без видимых потерь».": "Photos: JPEG and PNG. Videos — only “visually lossless”.",
+    "Фото: JPEG и PNG; видео — в формат AV1 (MP4, MOV, MKV, WebM).":
+        "Photos: JPEG and PNG; videos — to AV1 (MP4, MOV, MKV, WebM).",
+    "Фото: JPEG и PNG.": "Photos: JPEG and PNG.",
+    "AV1 Windows 11 показывает сразу, Windows 10 — после бесплатного расширения «AV1 Video Extension» из "
+    "Microsoft Store.":
+        "Windows 11 plays AV1 right away; Windows 10 needs the free “AV1 Video Extension” from the Microsoft Store.",
+    "Видео строго без потерь не сжимается — только в режиме «Без видимых потерь»":
+        "Videos can't be compressed strictly losslessly — only in “Visually lossless” mode",
+    "Отметь, что сжимать.": "Choose what to compress.",
+    "Отметь, что сжимать: фото или видео.": "Choose what to compress: photos or videos.",
+    "Не хватает программ: {names}. Запусти tools/fetch_tools.py.": "Missing tools: {names}. Run tools/fetch_tools.py.",
+    "Подготовленные копии ещё не заменили оригиналы. Начать заново? Они пропадут.":
+        "The prepared copies haven't replaced the originals yet. Start over? They will be lost.",
+    "Начать заново": "Start over",
+    "Готовлю… Сжатые копии появятся здесь сразу, по одной.": "Preparing… Compressed copies will appear here one by one.",
+    "Ищу фото и видео…": "Looking for photos and videos…",
+    "Найдено файлов: {n}.": "Files found: {n}.",
+    "Готовлю сжатые копии · {done} из {total}": "Preparing compressed copies · {done} of {total}",
+    "{app} — сжатие, {pct}%": "{app} — compressing, {pct}%",
+    "освободится уже {now}, по всей папке ≈ {all}": "{now} to free so far, ≈ {all} for the whole folder",
+    "сейчас: {name}": "now: {name}",
+    "Подготовка прервалась из-за ошибки:\n{text}": "Preparation stopped because of an error:\n{text}",
+    "Место на диске кончается — подготовку остановил.": "The disk is running out of space — preparation stopped.",
+    "Замени готовые файлы — место освободится, и можно продолжить.":
+        "Replace the ready files — that frees space, and you can continue.",
+    "Подготовка остановлена.": "Preparation stopped.",
+    " Готовые копии — в списке.": " Ready copies are in the list.",
+    "Готово за {t}. Сжимать нечего.": "Done in {t}. Nothing to compress.",
+    "Ни один файл не уменьшился заметно — они уже сжаты хорошо.":
+        "No file got noticeably smaller — they are already well compressed.",
+    "Подходящих фото и видео в папке нет.": "There are no suitable photos or videos in the folder.",
+    "Готово за {t}. Проверь «было → стало» и нажми «Заменить».": "Done in {t}. Check “before → after” and press “Replace”.",
+    "Не сжаты: {n}": "Not compressed: {n}",
+    "Заменить": "Replace",
+    "Было": "Before",
+    "Стало": "After",
+    "Меньше на": "Saved",
+    "Проверка": "Check",
+    "байт в байт": "byte for byte",
+    "SSIM {v}": "SSIM {v}",
+    "Отметка — оригинал уйдёт в Корзину, на его место встанет сжатый файл":
+        "Checked — the original goes to the Recycle Bin and the compressed file takes its place",
+    "Было → стало": "Before → after",
+    "Выбери файл в списке — здесь будут оригинал и сжатая копия рядом. Двойной щелчок или пробел — сравнить "
+    "крупно, с увеличением.":
+        "Pick a file in the list — the original and the compressed copy will appear here side by side. "
+        "Double-click or press Space to compare up close, with zoom.",
+    "Сравнить крупно": "Compare up close",
+    "Сравнить крупно  (пробел)": "Compare up close  (Space)",
+    "Открыть оригинал": "Open original",
+    "Открыть сжатый": "Open compressed",
+    "{old} → {new}, меньше на {pct} ({saved})": "{old} → {new}, {pct} smaller ({saved})",
+    "пиксели совпадают байт в байт — изображение то же самое":
+        "pixels match byte for byte — the image is exactly the same",
+    "SSIM {v}: на глаз разницы нет": "SSIM {v}: no visible difference",
+    "Загружаю…": "Loading…",
+    "Отметить все": "Mark all",
+    "Заменить оригиналы": "Replace originals",
+    "Заменить {n} {files}  ·  освободится {size}": "Replace {n} {files}  ·  frees {size}",
+    "Готово к замене: {ready}  ·  отмечено: {n}  ·  было {old} → станет {new}":
+        "Ready to replace: {ready}  ·  marked: {n}  ·  {old} now → {new} after",
+    "  ·  подготовка продолжается…": "  ·  still preparing…",
+    "Эти файлы оставлены как есть:\n\n": "These files were left as they are:\n\n",
+    "Эти файлы или папки не удалось прочитать:\n\n": "These files or folders could not be read:\n\n",
+    "Заменяю файлы…": "Replacing files…",
+    "Заменять нечего:\n\n": "Nothing to replace:\n\n",
+    "Заменить {n} {files} сжатыми копиями? Освободится {size}.\n\nОригиналы уйдут в Корзину — вернуть можно "
+    "оттуда. Имена и даты файлов останутся прежними.":
+        "Replace {n} {files} with compressed copies? This frees {size}.\n\nThe originals go to the Recycle Bin — "
+        "you can restore them from there. File names and dates stay the same.",
+    "\n\n⚠ На дисках {drives} Корзины нет (флешка, карта памяти или сетевой диск): оригиналы оттуда удалятся "
+    "НАВСЕГДА, вернуть их будет нельзя.":
+        "\n\n⚠ Drives {drives} have no Recycle Bin (USB stick, memory card or network drive): the originals there "
+        "will be deleted PERMANENTLY and can't be restored.",
+    "Заменить, оригиналы навсегда": "Replace, delete originals permanently",
+    "Все отмеченные файлы заменены сжатыми.": "All marked files were replaced with compressed ones.",
+    "Заменено файлов: {n}. Освободилось {size}. Оригиналы — в Корзине.":
+        "Files replaced: {n}. Freed {size}. The originals are in the Recycle Bin.",
+    "\n\nНе заменены {n}:\n": "\n\nNot replaced {n}:\n",
+    "Заменено файлов: {n}, освободилось {size}. Оригиналы — в Корзине.":
+        "Files replaced: {n}, freed {size}. The originals are in the Recycle Bin.",
+    "Сравнение «было / стало»": "Before / after",
+    "Вписать": "Fit",
+    "Колёсико — масштаб, мышью — двигать: обе половины двигаются вместе.":
+        "Wheel — zoom, drag with the mouse to move: both halves move together.",
+    "← Предыдущий": "← Previous",
+    "Следующий →": "Next →",
+    "{i} из {n}": "{i} of {n}",
+    "Было {old} → стало {new}, меньше на {pct}": "Before {old} → after {new}, {pct} smaller",
+    "Показан один кадр из видео. Посмотреть целиком — «Открыть сжатый».":
+        "One frame of the video is shown. To watch all of it, use “Open compressed”.",
+    # ---- что сделано и почему не сжат (compcore)
+    "перепаковка": "repacked",
+    "перепаковка (progressive)": "repacked (progressive)",
+    "перепаковка PNG": "PNG repacked",
+    "JPEG, качество {q}": "JPEG, quality {q}",
+    "AV1, качество CRF {crf}": "AV1, quality CRF {crf}",
+    "код {n}": "code {n}",
+    "файл не похож на JPEG": "the file doesn't look like a JPEG",
+    "испорченный JPEG": "damaged JPEG",
+    "jpegtran не собрал файл": "jpegtran didn't produce a file",
+    "в файле несколько снимков (HDR, глубина) — их бы потерять": "the file holds several images (HDR, depth) — they would be lost",
+    "необычный JPEG — не трогаю": "unusual JPEG — left alone",
+    "уже сжат сильно — дальше будут видны потери": "already strongly compressed — further loss would be visible",
+    "без видимых потерь не сжимается": "can't be compressed without visible loss",
+    "видео не открывается": "the video doesn't open",
+    "в файле нет видео": "no video in the file",
+    "уже в AV1": "already AV1",
+    "HDR-видео — не трогаю, чтобы не испортить цвета": "HDR video — left alone to keep the colors right",
+    "после сжатия видео не сходится с оригиналом (длина или звук)":
+        "after compression the video doesn't match the original (length or sound)",
+    "не удалось сравнить видео с оригиналом": "couldn't compare the video with the original",
+    "файл изменился": "the file has changed",
+    "файл только для чтения": "the file is read-only",
+    "почти не уменьшился": "barely got smaller",
+    "после пересборки пиксели не совпали — файл не трогаю": "pixels didn't match after rebuilding — file left alone",
+    "файл пропал после подготовки": "the file is gone since preparation",
+    "файл изменился после подготовки": "the file has changed since preparation",
+    "сжатая копия пропала — подготовь заново": "the compressed copy is gone — prepare again",
+    "оригинал не удалось убрать в Корзину — оставлен как был":
+        "couldn't move the original to the Recycle Bin — left as it was",
+    "оригинал в Корзине, а сжатый файл остался под именем {name}: {err}":
+        "the original is in the Recycle Bin, but the compressed file stayed as {name}: {err}",
+    "заменён, но даты не перенеслись: {err}": "replaced, but the dates were not copied: {err}",
+    # ---- окно и трей при сжатии
+    "Остановить сжатие": "Stop compression",
+    "Сжатые копии готовы: {n}. Можно освободить {size}.": "Compressed copies are ready: {n}. You can free {size}.",
+    "Сжимать нечего: файлы уже сжаты хорошо.": "Nothing to compress: the files are already well compressed.",
+    "Сжатие подготовлено": "Compression prepared",
+    "Сейчас идёт сжатие — если закрыть программу, оно остановится, а готовые копии пропадут.":
+        "Compression is running — if you close the app, it stops and the ready copies are lost.",
+    "Идёт сжатие. Закрыть программу и остановить его? Готовые копии пропадут.":
+        "Compression is running. Close the app and stop it? The ready copies will be lost.",
+    "Продолжить сжатие": "Keep compressing",
+    "Сжатые копии ещё не заменили оригиналы — при закрытии они пропадут.":
+        "The compressed copies haven't replaced the originals yet — closing loses them.",
+    "Сжатые копии ещё не заменили оригиналы. Закрыть программу? Они пропадут.":
+        "The compressed copies haven't replaced the originals yet. Close the app? They will be lost.",
+    "Не закрывать": "Don't close",
+    "Сжатие ещё идёт или сжатые копии не заменили оригиналы. Обновиться сейчас? Готовые копии пропадут.":
+        "Compression is still running or the compressed copies haven't replaced the originals. Update now? "
+        "The ready copies will be lost.",
+    "В трее программа продолжает работать: значок у часов, поиск и сжатие не прерываются.":
+        "In the tray the app keeps working: the icon is next to the clock, scanning and compression continue.",
     # ---- вкладка «Настройки»
     "Нагрузка на компьютер": "System load",
     "Как сильно поиск дубликатов занимает диск и процессор.": "How much the scan uses the disk and processor.",
@@ -254,8 +404,6 @@ EN = {
     "Закрывать программу": "Exit the app",
     "Спрашивать каждый раз": "Ask every time",
     "Свернуть Duplio в трей или закрыть?": "Minimize Duplio to the tray or exit?",
-    "В трее программа продолжает работать: значок у часов, поиск не прерывается.":
-        "In the tray the app keeps running: icon next to the clock, the scan continues.",
     "Сейчас идёт поиск — если закрыть программу, он остановится.": "A scan is running — exiting will stop it.",
     "Больше не спрашивать (можно поменять в «Настройках»)": "Don't ask again (you can change this in Settings)",
     "Закрыть программу": "Exit",
@@ -272,10 +420,12 @@ EN = {
         "Activity log — what the app did and which errors happened. It helps to figure out what went wrong; "
         "it is never sent anywhere. Its size is capped at 3 MB, older entries are replaced by newer ones.",
     "Открыть папку журнала": "Open log folder",
-    "Временных файлов и кэша на диске нет: превью живут только в памяти, пока открыто окно. Удалённые копии "
-    "лежат в Корзине, пока ты её не очистишь.":
-        "No temporary files or disk cache: previews live in memory only while the window is open. "
-        "Deleted copies stay in the Recycle Bin until you empty it.",
+    "Кэша на диске нет: превью живут только в памяти, пока открыто окно. Пока готовится сжатие, сжатые копии "
+    "лежат в {work} — папка очищается при каждой новой подготовке и при выходе. Удалённые копии и заменённые "
+    "оригиналы лежат в Корзине, пока ты её не очистишь.":
+        "There is no cache on disk: previews live only in memory while the window is open. While compression is "
+        "being prepared, compressed copies sit in {work} — the folder is emptied on every new preparation and "
+        "on exit. Deleted copies and replaced originals stay in the Recycle Bin until you empty it.",
     "Что-то пошло не так: {err}\n\nПодробности записаны в журнал. Программа продолжит работать.":
         "Something went wrong: {err}\n\nThe details are in the activity log. The app keeps running.",
     "Открыть журнал": "Open log",

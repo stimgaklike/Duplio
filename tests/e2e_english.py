@@ -18,8 +18,8 @@ i18n.set_lang("en")
 tmp_cfg = tempfile.mkdtemp(prefix="dup_cfg_")
 settings.DIR, settings.PATH = tmp_cfg, os.path.join(tmp_cfg, "settings.json")
 
-from PySide6.QtWidgets import (QAbstractButton, QApplication, QComboBox, QLabel, QLineEdit, QTabBar,  # noqa: E402
-                               QTreeWidget, QWidget)
+from PySide6.QtWidgets import (QAbstractButton, QApplication, QComboBox, QLabel, QLineEdit, QMenu,  # noqa: E402
+                               QTabBar, QTreeWidget, QWidget)
 
 import app  # noqa: E402
 import dups_page  # noqa: E402
@@ -77,6 +77,8 @@ def scan_widgets(where):
             texts.append(wd.placeholderText())
         if isinstance(wd, QComboBox):
             texts += [wd.itemText(i) for i in range(wd.count())]
+        if isinstance(wd, QMenu):
+            texts += [a.text() for a in wd.actions()]
         if isinstance(wd, QTabBar):
             texts += [wd.tabText(i) for i in range(wd.count())]
         if isinstance(wd, QTreeWidget):
@@ -126,6 +128,65 @@ scan_widgets("ход поиска")
 p.delete_marked()
 pump()
 scan_widgets("после удаления")
+# ---- «Сжатие»: оба режима, сравнение крупно, несжатые, замена, трей, выход
+import compcore  # noqa: E402
+import compress_page  # noqa: E402
+from test_compcore import make_video, photo, save_jpeg  # noqa: E402
+
+compcore.WORK = tempfile.mkdtemp(prefix="dup_en_work_")
+croot = tempfile.mkdtemp(prefix="dup_en_cmp_")
+save_jpeg(photo(noise=0), os.path.join(croot, "a.jpg"), quality=97)
+save_jpeg(photo(400, 300, seed=3), os.path.join(croot, "low.jpg"), quality=80)
+make_video(os.path.join(croot, "v.mp4"), seconds=1, extra=("-b:v", "6M"))
+c = w.compress
+w.tabs.setCurrentWidget(c)
+tray_said = []
+w.tray.showMessage = lambda title, text, *a: tray_said.extend([title, text])
+for mode in ("lossless", "visual"):
+    c.mode_btns[mode].click()
+    pump(0.2)
+    scan_widgets(f"сжатие: режим {mode}")
+    c.folder.setText(croot)
+    c.start()
+    c.busy = True
+    c._show_progress(0, 0, 0, 3, "")
+    scan_widgets("сжатие: обход папок")
+    t0 = time.time()
+    while c.busy and time.time() - t0 < 60:
+        pump(0.05)
+    pump(1.5)
+    scan_widgets(f"сжатие: готово ({mode})")
+    if c.ready:
+        c.tree.setCurrentItem(c.items[c.ready[-1].path])
+        pump(1)
+        scan_widgets("сжатие: было → стало")
+        dlg = compress_page.CompareDialog(c, c.ready, len(c.ready) - 1)
+        dlg.show()
+        pump(0.4)
+        scan_widgets("сжатие: сравнение крупно")
+        dlg.close()
+    if c.skipped:
+        c.show_skipped()
+    c.busy = True
+    c._show_progress(50, 100, 1, 3, "v.mp4")
+    c._update_summary()
+    scan_widgets("сжатие: ход")
+    c.busy = False
+    for note in filter(None, [w.busy_note()]):
+        said.extend(x for x in note if isinstance(x, str))
+w.hide()                                   # уведомление в трее — только когда окна не видно
+w._compress_finished(2, 1000)
+w._compress_finished(0, 0)
+w.show()
+check_tray = len(tray_said) == 4
+c.replace_marked()
+pump()
+scan_widgets("сжатие: после замены")
+if not check_tray:
+    found.setdefault(f"уведомления трея не пришли: {tray_said}", "трей")
+for t in tray_said:
+    if CYR.search(t):
+        found.setdefault(t, "трей")
 for page in (w.compress, w.settings):
     w.tabs.setCurrentWidget(page)
     pump(0.3)
@@ -151,6 +212,7 @@ for t in said:
 
 w.quit_app()
 shutil.rmtree(root, ignore_errors=True)
+shutil.rmtree(croot, ignore_errors=True)
 shutil.rmtree(tmp_cfg, ignore_errors=True)
 if found:
     print(f"FAIL русские строки в английском интерфейсе: {len(found)}")

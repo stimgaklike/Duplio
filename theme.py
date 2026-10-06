@@ -121,6 +121,8 @@ QPushButton#chip:pressed {{ background: {c['btn_pressed']}; padding-top: 6px; pa
 QPushButton#chip:checked {{ background: {c['accent']}; color: {c['accent_text']}; border-color: {c['accent']}; }}
 QPushButton#chip:checked:hover {{ background: {c['accent_hover']}; border-color: {c['accent_hover']}; }}
 QPushButton#chip:checked:pressed {{ background: {c['accent_pressed']}; }}
+QPushButton#chip:disabled, QPushButton#chip:checked:disabled {{ background: {c['surface']}; color: {c['muted']};
+    border: 1px dashed {c['border_hover']}; }}
 QPushButton#link {{ background: transparent; border: none; color: {c['accent']}; padding: 0; }}
 QPushButton#link:hover {{ text-decoration: underline; }}
 QPushButton#link:pressed {{ color: {c['accent_pressed']}; padding: 0; }}

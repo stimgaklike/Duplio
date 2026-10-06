@@ -32,9 +32,10 @@ def ask_close(parent, busy=False):
     lay.setContentsMargins(22, 18, 22, 18)
     lay.setSpacing(12)
     lay.addWidget(label(tr("Свернуть Duplio в трей или закрыть?"), "h2"))
-    text = tr("В трее программа продолжает работать: значок у часов, поиск не прерывается.")
-    if busy:
-        text += "\n" + tr("Сейчас идёт поиск — если закрыть программу, он остановится.")
+    text = tr("В трее программа продолжает работать: значок у часов, поиск и сжатие не прерываются.")
+    if busy:                 # True — идёт поиск; строка — своё предупреждение (например, про сжатие)
+        text += "\n" + (busy if isinstance(busy, str)
+                        else tr("Сейчас идёт поиск — если закрыть программу, он остановится."))
     lay.addWidget(label(text, "muted", wrap=True))
     remember = QCheckBox(tr("Больше не спрашивать (можно поменять в «Настройках»)"))
     lay.addWidget(remember)

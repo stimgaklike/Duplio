@@ -8,14 +8,16 @@
 # Duplio
 
 Программа для Windows, которая находит одинаковые файлы — фото, видео, музыку, документы — во всех
-вложенных папках, показывает копии рядом с превью и отправляет лишние в Корзину.
+вложенных папках, показывает копии рядом с превью и отправляет лишние в Корзину. А ещё сжимает фото
+и видео: строго без потерь или без видимых потерь, со сравнением «было / стало» перед заменой.
 
 **[Скачать установщик](https://github.com/stimgaklike/Duplio/releases/latest)** · Windows 10/11, 64 бит ·
 ставится без прав администратора · обновляется сама
 
 *English: Duplio finds identical files (photos, videos, music, documents) across all subfolders, shows the copies
-side by side with previews and moves the extra ones to the Recycle Bin. The interface is available in English
-(Settings → Language).*
+side by side with previews and moves the extra ones to the Recycle Bin. It also compresses photos and videos —
+strictly lossless or visually lossless, with a before/after comparison before replacing. The interface is
+available in English (Settings → Language).*
 
 ## Что умеет
 
@@ -28,6 +30,15 @@ side by side with previews and moves the extra ones to the Recycle Bin. The inte
 - **Нагрузка на выбор**: бережно (не мешает другим программам), обычно (для HDD), быстро (для SSD).
 - **Трей**: крестик спрашивает — свернуть к часам (поиск продолжается) или закрыть; можно запомнить выбор.
   По окончании поиска в трее — уведомление.
+- **Сжатие фото и видео** — два режима на выбор:
+  - *строго без потерь* — JPEG и PNG пересобираются без изменения пикселей (обычно −5–20 %), каждый файл
+    сверяется с оригиналом байт в байт;
+  - *без видимых потерь* — JPEG с качеством 85–90, видео в AV1 (обычно −30–70 %), разница проверяется
+    числом (SSIM), а не на глаз; файл, который так не сжимается, не трогается.
+
+  Тип файла не меняется, метаданные (EXIF, профиль цвета) и даты остаются. Сначала программа готовит сжатые
+  копии и показывает «было / стало» рядом с увеличением; оригиналы уходят в Корзину только по кнопке
+  «Заменить», на которой видно, сколько освободится.
 - **Светлая и тёмная тема, русский и английский язык.**
 - **Обновления**: программа сама узнаёт о новой версии и ставит её по одной кнопке.
 
@@ -45,6 +56,8 @@ side by side with previews and moves the extra ones to the Recycle Bin. The inte
 
 - Настройки — `%APPDATA%\Duplio\settings.json` (меньше 1 КБ).
 - Журнал работы для разбора ошибок — `%LOCALAPPDATA%\Duplio\logs`, не больше 3 МБ, никуда не отправляется.
+- Пока готовится сжатие — сжатые копии в `%LOCALAPPDATA%\Duplio\work`; папка очищается при каждой новой
+  подготовке и при выходе.
 - Больше ничего: превью живут в памяти. При удалении программы через «Приложения» уходит и это.
 - В сеть программа обращается только к GitHub — узнать, есть ли новая версия (можно выключить).
 
@@ -60,10 +73,12 @@ side by side with previews and moves the extra ones to the Recycle Bin. The inte
 ## Разработка
 
 ```
-pip install pyside6 pyinstaller
+pip install pyside6 pyinstaller pillow numpy
+python tools/fetch_tools.py            # jpegtran, oxipng, ffmpeg в third_party\ (закреплённые версии, SHA-256)
 python app.py                          # запуск из исходников
 python -m unittest discover -s tests   # тесты логики, обновлений, журнала
 python tests/e2e_app.py                # прогон окна целиком (+ снимки экрана)
+python tests/e2e_compress.py           # вкладка «Сжатие» целиком: оба режима, сравнение, замена
 python tests/e2e_english.py            # английский интерфейс без единой русской строки
 python tests/bench_resize.py           # плавность при растягивании окна
 build.bat                              # программа в dist\Duplio и установщик dist\Duplio-Setup-<версия>.exe
@@ -79,7 +94,9 @@ build.bat                              # программа в dist\Duplio и у
 | `dupcore.py` | поиск, правила «что оставить», проверки перед удалением, Корзина |
 | `app.py` | главное окно, трей, обновления, второй запуск |
 | `dups_page.py` | вкладка «Дубликаты»: список, сравнение, быстрый просмотр |
-| `settings_page.py`, `compress_page.py` | остальные вкладки |
+| `compcore.py` | сжатие: jpegtran / oxipng / ffmpeg, проверка пикселей и SSIM, замена с датами |
+| `compress_page.py` | вкладка «Сжатие»: список «было → стало», сравнение крупно |
+| `settings_page.py` | «Настройки» |
 | `thumbs.py` | превью фото и кадры из видео в фоне |
 | `updater.py` | проверка, скачивание и установка обновлений |
 | `i18n.py` | русский и английский |
@@ -89,8 +106,9 @@ build.bat                              # программа в dist\Duplio и у
 
 ## План и история
 
-[ROADMAP.md](ROADMAP.md) — что дальше (следующий этап — сжатие фото и видео), [CHANGELOG.md](CHANGELOG.md) — что менялось.
+[ROADMAP.md](ROADMAP.md) — что дальше, [CHANGELOG.md](CHANGELOG.md) — что менялось.
 
 ## Лицензия
 
 [MIT](LICENSE) — пользуйся, меняй, распространяй; сохраняй упоминание автора.
+Сторонние программы для сжатия и их лицензии — [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

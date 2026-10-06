@@ -124,14 +124,15 @@ def _is_link(path):
     return bool(getattr(st, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT) or os.path.islink(path)
 
 
-def collect(root, cancel=None, errors=None, kinds=DEFAULT_KINDS, on_file=None, cloud=None):
+def collect(root, cancel=None, errors=None, kinds=DEFAULT_KINDS, on_file=None, cloud=None, take=None):
     """Нужные файлы во вложенных папках. Один и тот же файл (жёсткая ссылка) — один раз.
 
     cloud — список, куда складываются пропущенные облачные файлы (их не читаем вовсе).
+    take(расширение) — свой отбор вместо типов kinds (так берёт файлы «Сжатие»).
     """
     seen_ids = set()
     out = []
-    take = ext_filter(kinds)
+    take = take or ext_filter(kinds)
     skip_system = "other" in kinds
 
     def onerror(exc):

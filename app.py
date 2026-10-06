@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabe
                                QPushButton, QStackedWidget, QSystemTrayIcon, QTabBar, QTextBrowser,
                                QVBoxLayout, QWidget)
 
+import compcore
 import dupcore
 import i18n
 import logs
@@ -84,9 +85,12 @@ class UpdateDialog(QDialog):
 
     def _go(self):
         if self.path:                       # уже скачано — ставим
-            if self.win.dups.busy and not U.ask_yes_no(
-                    self, tr("Сейчас идёт поиск. Остановить его и обновиться сейчас? Найденное будет потеряно."),
-                    yes=tr("Остановить и обновить"), no=tr("Позже")):
+            note = self.win.busy_note()
+            text = (tr("Сейчас идёт поиск. Остановить его и обновиться сейчас? Найденное будет потеряно.")
+                    if self.win.dups.busy else
+                    tr("Сжатие ещё идёт или сжатые копии не заменили оригиналы. Обновиться сейчас? Готовые копии "
+                       "пропадут."))
+            if note and not U.ask_yes_no(self, text, yes=tr("Остановить и обновить"), no=tr("Позже")):
                 return
             log.info("Обновление: запускаю установщик %s", self.path)
             updater.install(self.path)
@@ -209,7 +213,7 @@ class MainWindow(QMainWindow):
         col.addWidget(self.banner)
         self.tabs = Tabs(self._brand())
         self.dups = DupsPage(cfg, self.thumbs, self.colors)
-        self.compress = CompressPage()
+        self.compress = CompressPage(cfg, self.colors)
         self.settings = SettingsPage(cfg)
         self.tabs.addTab(self.dups, tr("Дубликаты"))
         self.tabs.addTab(self.compress, tr("Сжатие"))
@@ -222,6 +226,11 @@ class MainWindow(QMainWindow):
         self.dups.settings_changed.connect(lambda: settings.save(self.cfg))
         self.dups.finished.connect(self._scan_finished)
         self.settings.load_changed.connect(self.dups.set_load_text)
+        self.settings.load_changed.connect(self.compress.set_load_text)
+        self.compress.title_changed.connect(self._title)
+        self.compress.go_settings.connect(lambda: self.tabs.setCurrentWidget(self.settings))
+        self.compress.settings_changed.connect(lambda: settings.save(self.cfg))
+        self.compress.finished.connect(self._compress_finished)
         self.settings.theme_changed.connect(self.apply_theme)
         self.settings.restart_requested.connect(self.restart)
         self.settings.check_updates_requested.connect(lambda: self.check_updates(manual=True))
@@ -332,8 +341,10 @@ class MainWindow(QMainWindow):
         menu.addAction(tr("Открыть"), self.bring_back)
         menu.addSeparator()
         self.act_stop = menu.addAction(tr("Остановить поиск"), self.dups.stop_scan)
+        self.act_stop_compress = menu.addAction(tr("Остановить сжатие"), self.compress.stop)
         menu.addAction(tr("Выход"), self.quit_app)
-        menu.aboutToShow.connect(lambda: self.act_stop.setVisible(self.dups.busy))
+        menu.aboutToShow.connect(lambda: (self.act_stop.setVisible(self.dups.busy),
+                                          self.act_stop_compress.setVisible(self.compress.busy)))
         self.tray_menu = menu
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(
@@ -361,6 +372,31 @@ class MainWindow(QMainWindow):
             text = tr("Точных копий не нашлось.")
         self.tray.showMessage(tr("Поиск завершён"), text, self.icon, 8000)
 
+    def _compress_finished(self, ready, size):
+        if self.isVisible() and not self.isMinimized():
+            return
+        if ready:
+            text = tr("Сжатые копии готовы: {n}. Можно освободить {size}.", n=i18n.num(ready),
+                      size=dupcore.human_size(size))
+        else:
+            text = tr("Сжимать нечего: файлы уже сжаты хорошо.")
+        self.tray.showMessage(tr("Сжатие подготовлено"), text, self.icon, 8000)
+
+    def busy_note(self):
+        """Что пропадёт при выходе: (текст для окна крестика, вопрос, кнопка «не закрывать») или None."""
+        if self.dups.busy:
+            return (True, tr("Идёт поиск. Закрыть программу и остановить его? Найденное будет потеряно."),
+                    tr("Продолжить поиск"))
+        if self.compress.busy:
+            return (tr("Сейчас идёт сжатие — если закрыть программу, оно остановится, а готовые копии пропадут."),
+                    tr("Идёт сжатие. Закрыть программу и остановить его? Готовые копии пропадут."),
+                    tr("Продолжить сжатие"))
+        if self.compress.has_pending():
+            return (tr("Сжатые копии ещё не заменили оригиналы — при закрытии они пропадут."),
+                    tr("Сжатые копии ещё не заменили оригиналы. Закрыть программу? Они пропадут."),
+                    tr("Не закрывать"))
+        return None
+
     def quit_app(self, confirmed=False):
         """confirmed — про идущий поиск уже спросили (например, в окне обновления)."""
         self.quitting = True
@@ -383,7 +419,8 @@ class MainWindow(QMainWindow):
         warned = getattr(self, "_quit_confirmed", False)
         if action == "ask":
             warned = True                       # в окне вопроса про идущий поиск уже сказано
-            action, remember = U.ask_close(self, busy=self.dups.busy)
+            note = self.busy_note()
+            action, remember = U.ask_close(self, busy=note[0] if note else False)
             if action is None:                  # «Отмена» — окно остаётся
                 e.ignore()
                 return
@@ -391,9 +428,8 @@ class MainWindow(QMainWindow):
                 self.cfg["close_action"] = action
                 settings.save(self.cfg)
                 self.settings.show_close_action()
-        if action == "quit" and self.dups.busy and not warned and not U.ask_yes_no(
-                self, tr("Идёт поиск. Закрыть программу и остановить его? Найденное будет потеряно."),
-                yes=tr("Закрыть"), no=tr("Продолжить поиск")):
+        note = None if warned else self.busy_note()
+        if action == "quit" and note and not U.ask_yes_no(self, note[1], yes=tr("Закрыть"), no=note[2]):
             e.ignore()
             self.quitting = False
             return
@@ -409,6 +445,9 @@ class MainWindow(QMainWindow):
             return
         if self.dups.cancel:
             self.dups.cancel.set()
+        if self.compress.cancel:
+            self.compress.cancel.set()
+        compcore.clean_work()                   # сжатые копии, которые не заменили оригиналы, больше не нужны
         settings.save(self.cfg)
         log.info("Выход")
         release_mutex()
@@ -427,6 +466,9 @@ class MainWindow(QMainWindow):
         if self.dups.groups:
             self.dups.current_group = None
             self.dups.refresh()
+        if self.compress.ready:
+            self.compress.refresh()
+        self.compress.update()
 
     # ---------- второй запуск
 
@@ -497,6 +539,7 @@ def main():
     logs.setup(VERSION)
     log.info("Язык %s, тема %s, нагрузка %s", i18n.LANG, cfg.get("theme"), cfg.get("load"))
     updater.cleanup()                                 # установщик прошлого обновления больше не нужен
+    compcore.clean_work()                             # сжатые копии от прошлого запуска (если он упал)
     win = MainWindow(cfg)
     win.server = listen(win)
     win.show()
