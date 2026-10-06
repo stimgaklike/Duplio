@@ -90,3 +90,5 @@ cmd /c "%CD%\build.bat"                         # программа + уста�
 - **В GitHub Actions вывод Python — в cp1252:** русский `print` роняет скрипт. Скрипты сборки делают
   `sys.stdout.reconfigure(encoding="utf-8")`; проверка — `PYTHONIOENCODING=cp1252 python скрипт | cat`.
 - **Bash здесь съедает `\\` даже в `<<'EOF'`:** правки с обратной косой — через Write файла-скрипта или Edit.
+  Так в `installer.iss` путь к каналу стал `'\.\pipe\…'` вместо `'\\.\pipe\…'` — установщик молча не мог
+  попросить программу закрыться; теперь это сверяет `tests/test_installer.py` (путь, текст просьбы, мьютекс, BOM).

@@ -90,7 +90,7 @@ var
   written: Cardinal;
   msg: AnsiString;
 begin
-  h := CreateFileW('\.\pipe\Duplio-' + GetUserNameString(), GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0);
+  h := CreateFileW('\\.\pipe\Duplio-' + GetUserNameString(), GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0);
   if h <> THandle(-1) then
   begin
     msg := 'duplio:quit';
