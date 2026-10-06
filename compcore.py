@@ -84,12 +84,20 @@ def _env():
     return env
 
 
-def _run(args, cancel=None, gentle=False, on_line=None, ok_codes=(0,)):
-    """Запустить программу без окна; cancel — остановить её. Возвращает stderr; ошибка — Skip."""
+def _run(args, cancel=None, gentle=False, on_line=None, ok_codes=(0,), src=None, dst=None):
+    """Запустить программу без окна; cancel — остановить её. Возвращает stderr; ошибка — Skip.
+
+    src / dst — файлы, которые программа читает со входа и пишет на выход: так ей не нужно знать их
+    имена (старые программы на C открывают файлы по ANSI-имени и не видят иероглифы, эмодзи, а на
+    английской Windows — и кириллицу).
+    """
     flags = CREATE_NO_WINDOW | (IDLE_PRIORITY_CLASS if gentle else BELOW_NORMAL_PRIORITY_CLASS)
     err_file = tempfile.TemporaryFile()
+    fin = open(src, "rb") if src else None
+    fout = open(dst, "wb") if dst else None
     try:
-        p = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE if on_line else subprocess.DEVNULL,
+        p = subprocess.Popen(args, stdin=fin or subprocess.DEVNULL,
+                             stdout=fout or (subprocess.PIPE if on_line else subprocess.DEVNULL),
                              stderr=err_file, creationflags=flags, env=_env())
         reader = None
         if on_line:
@@ -113,6 +121,9 @@ def _run(args, cancel=None, gentle=False, on_line=None, ok_codes=(0,)):
         err = err_file.read().decode("utf-8", "replace")
     finally:
         err_file.close()
+        for f in (fin, fout):
+            if f:
+                f.close()
     if p.returncode not in ok_codes:
         last = err.strip().splitlines()[-1] if err.strip() else tr("код {n}", n=p.returncode)
         raise Skip(f"{os.path.basename(args[0])}: {last[:200]}")
@@ -377,8 +388,8 @@ def _jpeg_lossless(job, dst, cancel, gentle):
         out = f"{dst}.{i}"
         # Код 2 — предупреждение («лишние байты» и т. п., частое у камер): файл всё равно собран,
         # а совпадение пикселей проверяется после.
-        _run([tool("jpegtran"), "-copy", "all", *extra, "-outfile", out, job.path], cancel, gentle, ok_codes=(0, 2))
-        if not os.path.exists(out):
+        _run([tool("jpegtran"), "-copy", "all", *extra], cancel, gentle, ok_codes=(0, 2), src=job.path, dst=out)
+        if not os.path.exists(out) or not os.path.getsize(out):
             raise Skip("jpegtran не собрал файл")
         if best is None or os.path.getsize(out) < os.path.getsize(best[0]):
             if best:

@@ -263,6 +263,24 @@ class VisualPhoto(Base):
         self.assertLess(low, C.PHOTO_SSIM_LOW)                # …а худшие блоки — видно
 
 
+class Names(Base):
+    """Имена вне кодировки Windows (ANSI): старые программы на C открывают файлы по ANSI-имени и не находят их.
+
+    На сервере GitHub (cp1252) так не открывалось даже «корзина-тест.jpg»; у владельца (cp1251) кириллица
+    работает, но иероглифы и эмодзи — нет.
+    """
+
+    NAME = "照片 фото 😀"
+
+    def test_every_tool_opens_unicode_names(self):
+        jpg = save_jpeg(photo(noise=6), self.p(self.NAME + ".jpg"), quality=97)
+        Image.fromarray(np.full((200, 300, 3), 90, np.uint8)).save(self.p(self.NAME + ".png"), compress_level=0)
+        vid = make_video(self.p(self.NAME + ".mp4"), seconds=1, extra=("-b:v", "6M"))
+        for path, mode in ((jpg, "lossless"), (jpg, "visual"), (self.p(self.NAME + ".png"), "lossless"), (vid, "visual")):
+            job = C.prepare_one(self.job(path), mode)
+            self.assertEqual(job.skip, "", f"{os.path.basename(path)} {mode}")
+
+
 class Tail(Base):
     """Данные после конца основной картинки: служебная запись Samsung переносится, картинка и видео — нет."""
 
