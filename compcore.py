@@ -771,7 +771,7 @@ def check_before_replace(jobs):
         if st.st_size != j.size or st.st_mtime != j.mtime:
             problems.append((j.path, "файл изменился после подготовки"))
         elif not j.out or not os.path.exists(j.out) or os.path.getsize(j.out) != j.new_size:
-            problems.append((j.path, "сжатая копия пропала — подготовь заново"))
+            problems.append((j.path, "готовая копия пропала — подготовь заново"))
         else:
             ok.append(j)
     return ok, problems
@@ -818,7 +818,7 @@ def replace(jobs, hwnd=None, progress=None, recycle=None, batch=None):
             try:
                 os.rename(tmp, j.path)
             except OSError as e:
-                problems.append((j.path, tr("оригинал в Корзине, а сжатый файл остался под именем {name}: {err}",
+                problems.append((j.path, tr("оригинал в Корзине, а новый файл остался под именем {name}: {err}",
                                             name=os.path.basename(tmp), err=e.strerror or e)))
                 continue
             try:

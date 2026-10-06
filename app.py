@@ -19,6 +19,7 @@ import compcore
 import dupcore
 import i18n
 import logs
+import metacore
 import settings
 import theme
 import ui_util as U
@@ -191,6 +192,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         from compress_page import CompressPage      # после выбора языка: тексты вкладок берутся при создании
         from dups_page import DupsPage
+        from meta_page import MetaPage
         from settings_page import SettingsPage
         from thumbs import Thumbs
         U.install_hand_cursor(QApplication.instance())     # до создания вкладок: их кнопки тоже получат «пальчик»
@@ -216,9 +218,11 @@ class MainWindow(QMainWindow):
         self.tabs = Tabs(self._brand())
         self.dups = DupsPage(cfg, self.thumbs, self.colors)
         self.compress = CompressPage(cfg, self.colors)
+        self.meta = MetaPage(cfg, self.colors)
         self.settings = SettingsPage(cfg)
         self.tabs.addTab(self.dups, tr("Дубликаты"))
         self.tabs.addTab(self.compress, tr("Сжатие"))
+        self.tabs.addTab(self.meta, tr("Метаданные"))
         self.tabs.addTab(self.settings, tr("Настройки"))
         col.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
@@ -238,6 +242,10 @@ class MainWindow(QMainWindow):
         self.compress.go_settings.connect(lambda: self.tabs.setCurrentWidget(self.settings))
         self.compress.settings_changed.connect(lambda: settings.save(self.cfg))
         self.compress.finished.connect(self._compress_finished)
+        self.settings.load_changed.connect(self.meta.set_load_text)
+        self.meta.title_changed.connect(self._title)
+        self.meta.go_settings.connect(lambda: self.tabs.setCurrentWidget(self.settings))
+        self.meta.settings_changed.connect(lambda: settings.save(self.cfg))
         self.settings.theme_changed.connect(self.apply_theme)
         self.settings.restart_requested.connect(self.restart)
         self.settings.check_updates_requested.connect(lambda: self.check_updates(manual=True))
@@ -349,9 +357,11 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         self.act_stop = menu.addAction(tr("Остановить поиск"), self.dups.stop_scan)
         self.act_stop_compress = menu.addAction(tr("Остановить сжатие"), self.compress.stop)
+        self.act_stop_meta = menu.addAction(tr("Остановить работу с метаданными"), self.meta.stop)
         menu.addAction(tr("Выход"), self.quit_app)
         menu.aboutToShow.connect(lambda: (self.act_stop.setVisible(self.dups.busy),
-                                          self.act_stop_compress.setVisible(self.compress.busy)))
+                                          self.act_stop_compress.setVisible(self.compress.busy),
+                                          self.act_stop_meta.setVisible(self.meta.busy)))
         self.tray_menu = menu
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(
@@ -398,6 +408,11 @@ class MainWindow(QMainWindow):
             return (tr("Сейчас идёт сжатие — если закрыть программу, оно остановится, а готовые копии пропадут."),
                     tr("Идёт сжатие. Закрыть программу и остановить его? Готовые копии пропадут."),
                     tr("Продолжить сжатие"))
+        if self.meta.busy:
+            return (tr("Сейчас идёт работа с метаданными — если закрыть программу, она остановится. "
+                       "Уже готовые файлы останутся готовыми."),
+                    tr("Идёт работа с метаданными. Закрыть программу и остановить её?"),
+                    tr("Продолжить"))
         if self.compress.has_pending():
             return (tr("Сжатые копии ещё не заменили оригиналы — при закрытии они пропадут."),
                     tr("Сжатые копии ещё не заменили оригиналы. Закрыть программу? Они пропадут."),
@@ -454,7 +469,9 @@ class MainWindow(QMainWindow):
             self.dups.cancel.set()
         if self.compress.cancel:
             self.compress.cancel.set()
+        self.meta.finish_before_exit()          # замену, начатую на «Метаданных», не обрываем на середине
         compcore.clean_work()                   # сжатые копии, которые не заменили оригиналы, больше не нужны
+        metacore.clean_work()
         settings.save(self.cfg)
         log.info("Выход")
         release_mutex()
@@ -476,6 +493,9 @@ class MainWindow(QMainWindow):
         if self.compress.ready:
             self.compress.refresh()
         self.compress.update()
+        if self.meta.items:
+            self.meta.refresh()
+        self.meta.update()
 
     # ---------- второй запуск
 
@@ -496,12 +516,25 @@ class MainWindow(QMainWindow):
             cur = self.compress if files and not dirs and all(
                 os.path.splitext(p)[1].lower() in media for p in files) else self.dups
         if cur.busy:
-            what = tr("поиск") if cur is self.dups else tr("сжатие")
+            what = tr("поиск") if cur is self.dups else tr("сжатие") if cur is self.compress else \
+                tr("работа с метаданными")
             return None, tr("Сейчас идёт {what} — дождись конца или останови его.", what=what), ""
         if cur is self.dups:
             folder = dirs[0] if dirs else os.path.dirname(files[0])
             return (cur, tr("Отпусти — подставлю папку «{name}» в «Дубликаты»", name=os.path.basename(folder) or folder),
                     tr("Искать начну по кнопке «Начать поиск»."))
+        if cur is self.meta:
+            if len(dirs) == 1 and not files:
+                return (cur, tr("Отпусти — подставлю папку «{name}» в «Метаданные»",
+                                name=os.path.basename(dirs[0]) or dirs[0]),
+                        tr("Проверю файлы по кнопке «Проверить файлы»."))
+            parts = []
+            if dirs:
+                parts.append(f"{i18n.num(len(dirs))} {i18n.plural(len(dirs), 'папку|папки|папок', 'folder|folders')}")
+            if files:
+                parts.append(f"{i18n.num(len(files))} {i18n.plural(len(files), 'файл|файла|файлов', 'file|files')}")
+            return (cur, tr("Отпусти — проверю только {what}", what=tr(" и ").join(parts)),
+                    tr("Остальные файлы в папках не трону. Проверю по кнопке."))
         if len(dirs) == 1 and not files:
             return (cur, tr("Отпусти — подставлю папку «{name}» в «Сжатие»", name=os.path.basename(dirs[0]) or dirs[0]),
                     tr("Сжатые копии начну готовить по кнопке."))

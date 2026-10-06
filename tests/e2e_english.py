@@ -37,6 +37,8 @@ said = []
 ui_util.ask_yes_no = lambda parent, text, **k: said.append(text) or True
 ui_util.info = lambda parent, text: said.append(text)
 ui_util.warn = lambda parent, text: said.append(text)
+ui_util.reveal = lambda path: None                        # не открывать настоящий Проводник
+ui_util.open_file = lambda path: None
 
 
 def put(rel, data):
@@ -88,7 +90,8 @@ def scan_widgets(where):
             texts += [wd.headerItem().text(i) for i in range(wd.columnCount())]
             for i in range(wd.topLevelItemCount()):
                 top = wd.topLevelItem(i)
-                texts.append(top.text(0))
+                texts += [top.text(c) for c in range(wd.columnCount())] + \
+                    [top.toolTip(c) for c in range(wd.columnCount())]
                 for j in range(top.childCount()):
                     ch = top.child(j)
                     texts += [ch.text(c) for c in range(wd.columnCount())] + [ch.toolTip(0)]
@@ -207,7 +210,80 @@ if not check_tray:
 for t in tray_said:
     if CYR.search(t):
         found.setdefault(t, "трей")
-for page in (w.compress, w.settings):
+# ---- «Метаданные»: проверка, наборы, «было → стало», копии, замена, ход, перетаскивание
+import dupcore  # noqa: E402
+import metacore  # noqa: E402
+from test_metacore import make_video as meta_video, phone_jpeg  # noqa: E402
+
+metacore.WORK = tempfile.mkdtemp(prefix="dup_en_meta_work_")
+atexit.register(shutil.rmtree, metacore.WORK, True)
+mroot = tempfile.mkdtemp(prefix="dup_en_meta_")
+atexit.register(shutil.rmtree, mroot, True)
+os.makedirs(os.path.join(mroot, "trip"))
+phone_jpeg(os.path.join(mroot, "trip", "a.jpg"))
+phone_jpeg(os.path.join(mroot, "b.jpg"))
+meta_video(os.path.join(mroot, "trip", "v.mp4"), "-movflags", "use_metadata_tags")
+with open(os.path.join(mroot, "broken.jpg"), "wb") as f:
+    f.write(b"\xff\xd8\xff\xe0 not a picture")
+mbin = tempfile.mkdtemp(prefix="dup_en_meta_bin_")
+atexit.register(shutil.rmtree, mbin, True)
+dupcore.to_recycle_bin = lambda paths, hwnd=None, **k: ([shutil.move(x, mbin) and x for x in paths], [])
+mp = w.meta
+w.tabs.setCurrentWidget(mp)
+pump(0.2)
+scan_widgets("метаданные: старт")
+for key in ("place", "custom", "all"):
+    mp.preset_btns[key].click()
+    pump(0.1)
+    scan_widgets(f"метаданные: набор {key}")
+mp.folder.setText(mroot)
+mp.start()
+mp._show_progress("scan", 0, 3, "")
+scan_widgets("метаданные: обход папок")
+t0 = time.time()
+while mp.busy and time.time() - t0 < 60:
+    pump(0.05)
+pump(0.5)
+scan_widgets("метаданные: прочитано")
+for it in mp.shown:
+    mp.tree.setCurrentItem(mp.tree_items[it.path])
+    pump(0.3)
+    scan_widgets("метаданные: было → стало")
+mp.show_skipped()
+mp.busy = True
+for step in ("scan", "clean", "replace", "copies"):
+    mp._show_progress(step, 1, 3, "a.jpg")
+    scan_widgets(f"метаданные: ход {step}")
+for note in filter(None, [w.busy_note()]):
+    said.extend(x for x in note if isinstance(x, str))
+said.extend(w.drop_plan([mroot])[1:])
+mp.busy = False
+for items in ([mroot], [os.path.join(mroot, "b.jpg"), mroot]):
+    page, title, sub = w.drop_plan(items)
+    said.extend([title, sub])
+mp.preset_btns["place"].click()
+mp.output_btns["copies"].click()
+pump(0.2)
+scan_widgets("метаданные: копии")
+mp.run_marked()
+t0 = time.time()
+while mp.busy and time.time() - t0 < 60:
+    pump(0.05)
+pump(0.3)
+mp.output_btns["replace"].click()
+mp.preset_btns["all"].click()
+mp.run_marked()
+t0 = time.time()
+while mp.busy and time.time() - t0 < 60:
+    pump(0.05)
+pump(0.3)
+scan_widgets("метаданные: после замены")
+mp.copies.setText("")
+mp.output_btns["copies"].click()
+mp.copies.setText("")
+mp.run_marked()                              # без папки — предупреждение
+w.grab().save(os.path.join(shots, "en_meta.png"))
+for page in (w.compress, w.meta, w.settings):
     w.tabs.setCurrentWidget(page)
     pump(0.3)
     scan_widgets(page.__class__.__name__)

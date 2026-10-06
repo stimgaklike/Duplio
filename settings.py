@@ -26,7 +26,13 @@ DEFAULTS = {
     "compress_mode": "lossless",  # lossless — строго без потерь, visual — без видимых потерь
     "compress_kinds": ["photo", "video"],
     "compress_folder": "",
+    "meta_folder": "",
+    "meta_preset": "all",        # all — всё, place — только место, custom — свой набор галочками
+    "meta_groups": ["place", "camera", "time", "author", "thumb", "other"],
+    "meta_output": "replace",    # replace — заменить оригиналы, copies — очищенные копии в папку
+    "meta_copies": "",
 }
+META_GROUPS = {"place", "camera", "time", "author", "thumb", "other"}
 
 
 def load():
@@ -50,6 +56,8 @@ ALLOWED = {
     "lang": {"auto", "ru", "en"},
     "close_action": {"ask", "tray", "quit"},
     "compress_mode": {"lossless", "visual"},
+    "meta_preset": {"all", "place", "custom"},
+    "meta_output": {"replace", "copies"},
 }
 KINDS = {"photo", "video", "audio", "docs", "archives", "other"}
 
@@ -68,7 +76,10 @@ def sanitize(data):
     ck = data.get("compress_kinds")
     if not isinstance(ck, list) or not set(ck) <= {"photo", "video"}:
         data["compress_kinds"] = list(DEFAULTS["compress_kinds"])
-    for key in ("last_folder", "compress_folder"):
+    mg = data.get("meta_groups")
+    if not isinstance(mg, list) or not set(mg) <= META_GROUPS:
+        data["meta_groups"] = list(DEFAULTS["meta_groups"])
+    for key in ("last_folder", "compress_folder", "meta_folder", "meta_copies"):
         if not isinstance(data.get(key), str):
             data[key] = ""
     if not isinstance(data.get("last_update_check"), (int, float)):

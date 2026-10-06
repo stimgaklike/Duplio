@@ -202,7 +202,8 @@ class Picture(QWidget):
         else:
             p.setPen(QColor(self.colors["muted"]))
             p.drawText(r, Qt.AlignCenter, self.text)
-        _badge(p, self.caption, self.colors)
+        if self.caption:
+            _badge(p, self.caption, self.colors)
 
 
 # ---------------------------------------------------------------- сравнение крупно
