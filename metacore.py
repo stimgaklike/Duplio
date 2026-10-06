@@ -1234,6 +1234,8 @@ UDTA = {
     b"\xa9nam": ("author", "Название"), b"titl": ("author", "Название"), b"\xa9inf": ("author", "Описание"),
     b"desc": ("author", "Описание"), b"ldes": ("author", "Описание"),
     b"covr": ("thumb", "Обложка"), b"thmb": ("thumb", "Превью"),
+    # Samsung: smta — превью ролика (JPEG ~250 КБ) и служебные записи; cami — параметры камеры.
+    b"smta": ("thumb", "Превью и служебная запись Samsung"), b"cami": ("camera", "Параметры камеры Samsung"),
     b"free": (None, ""), b"skip": (None, ""), b"wide": (None, ""), b"hnti": (None, ""), b"hinf": (None, ""),
     b"name": (None, ""),
 }
@@ -1269,6 +1271,17 @@ def _free(buf, s, c, e):
     buf[c:e] = bytes(e - c)
 
 
+THREEGPP = {b"auth", b"titl", b"dscp", b"perf", b"cprt", b"gnre", b"albm"}
+
+
+def _3gpp_text(buf, c, e):
+    """Текстовый блок 3GPP (Samsung пишет так auth = «Galaxy S24 Ultra»): версия, язык, строка до нуля."""
+    body = bytes(buf[c + 6:e])
+    if body[:2] in (b"\xfe\xff", b"\xff\xfe"):
+        return _short(body.decode("utf-16", "replace").split("\0", 1)[0])
+    return _short(body.split(b"\0", 1)[0].decode("utf-8", "replace"))
+
+
 def _atom_text(buf, c, e):
     """Значение текстового блока: в стиле QuickTime (длина, язык, текст) или iTunes (вложенный data)."""
     body = bytes(buf[c:e])
@@ -1282,6 +1295,9 @@ def _atom_text(buf, c, e):
         n = struct.unpack_from(">H", body, 0)[0]
         if 0 < n <= len(body) - 4:
             return _short(body[4:4 + n].decode("utf-8", "replace").strip("\0"))
+        rest = body[4:].rstrip(b"\0")                    # «полный» блок: 4 байта версии, потом текст (Samsung cami)
+        if body[:4] == bytes(4) and rest and all(32 <= ch < 127 for ch in rest):
+            return _short(rest.decode("ascii"))
     return _size(len(body))
 
 
@@ -1360,6 +1376,7 @@ class _Mp4:
             if g is None:
                 continue
             value = (_loci_text(self.buf, c, e) if typ == b"loci" else
+                     _3gpp_text(self.buf, c, e) if typ in THREEGPP else
                      _size(e - c) if g == "thumb" else _atom_text(self.buf, c, e))
             if self.add(g, tr(name) if name in _NAMES else name, value):
                 _free(self.buf, s, c, e)

@@ -182,6 +182,36 @@ def motion_jpeg(path):
     return path
 
 
+def box(typ, payload):
+    return struct.pack(">I", 8 + len(payload)) + typ + payload
+
+
+def add_udta(path, *boxes):
+    """Дописать блоки в конец udta. У ролика от ffmpeg moov — последний в файле, udta — последний в moov,
+    так что потоки не сдвигаются; размеры udta и moov увеличиваются на столько же."""
+    with open(path, "rb") as f:
+        data = bytearray(f.read())
+    moov = data.rindex(b"moov") - 4
+    udta = data.rindex(b"udta") - 4
+    assert moov + struct.unpack_from(">I", data, moov)[0] == len(data)
+    assert udta + struct.unpack_from(">I", data, udta)[0] == len(data)
+    extra = b"".join(boxes)
+    for at in (moov, udta):
+        struct.pack_into(">I", data, at, struct.unpack_from(">I", data, at)[0] + len(extra))
+    with open(path, "wb") as f:
+        f.write(bytes(data) + extra)
+    return path
+
+
+def samsung_video(path):
+    """Ролик, устроенный как у Galaxy S24 Ultra: auth (3GPP), smta с превью-JPEG, cami, SDLN."""
+    thumb = io.BytesIO()
+    picture(320, 180).save(thumb, "JPEG", quality=80)
+    smta = bytes(4) + box(b"saut", bytes(4)) + box(b"sthm", bytes(4) + box(b"stjp", thumb.getvalue()))
+    return add_udta(make_video(path), box(b"auth", bytes(4) + b"\x15\xc7Galaxy S24 Ultra\0"), box(b"smta", smta),
+                    box(b"cami", bytes(4) + b"3, 2, 3592, -1197, 1.0"), box(b"SDLN", b"SEQ_PLAY"))
+
+
 def probe_tags(path):
     info = C.probe(path)
     tags = dict(info.get("format", {}).get("tags", {}))
@@ -498,6 +528,24 @@ class Video(Base):
                 self.assertEqual(tags["com.android.capture.fps"], "30")     # без него замедленное видео — обычное
             self.assertEqual(M._streams(out), M._streams(src), name)
             self.assertEqual(os.path.getsize(out), os.path.getsize(src), name)
+
+    def test_samsung_blocks_named_and_grouped(self):
+        src = samsung_video(self.p("20251115_172307.mp4"))
+        self.assertEqual(M._streams(src), M._streams(make_video(self.p("plain.mp4"))))   # ролик цел
+        f = {(x.group, x.name): x.value for x in M.read(src).fields}
+        self.assertEqual(f[("author", "Автор")], "Galaxy S24 Ultra")                 # 3GPP: не «23 Б»
+        self.assertEqual(f[("camera", "Параметры камеры Samsung")], "3, 2, 3592, -1197, 1.0")
+        self.assertIn(("thumb", "Превью и служебная запись Samsung"), f)
+        self.assertIn(("other", "SDLN"), f)
+        out = self.cleaned(src, ["thumb"])
+        after = {(x.group, x.name) for x in M.read(out).fields}
+        self.assertNotIn(("thumb", "Превью и служебная запись Samsung"), after)
+        self.assertIn(("author", "Автор"), after)
+        with open(out, "rb") as fh:
+            data = fh.read()
+        self.assertNotIn(b"stjp", data)                                             # превью затёрто
+        self.assertEqual(len(data), os.path.getsize(src))
+        self.assertEqual(M._streams(out), M._streams(src))
 
     def test_change_outside_metadata_is_caught(self):
         a = make_video(self.p("a.mp4"))

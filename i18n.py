@@ -636,6 +636,8 @@ EN = {
     "Серийный номер объектива": "Lens serial number",
     "Геометка": "Location",
     "Параметры съёмки": "Shooting settings",
+    "Превью и служебная запись Samsung": "Samsung preview and service record",
+    "Параметры камеры Samsung": "Samsung camera parameters",
     "{v} мм": "{v} mm",
     "ещё полей: {n}": "{n} more fields",
     "без координат": "no coordinates",
