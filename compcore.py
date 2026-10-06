@@ -39,9 +39,14 @@ MIN_GAIN = {"lossless": 0.02, "visual": 0.10}
 
 # «Без видимых потерь» для фото: качество JPEG по очереди, берётся первое, что прошло проверку.
 PHOTO_QUALITIES = (85, 90)
-# Проверка фото: средний SSIM по яркости и SSIM худшего 1 % блоков 8×8 (портится лицо — видно здесь).
+# Проверка фото — SSIM яркости блоками 8×8 на кадре, уменьшенном вдвое (так фото смотрят: целиком на экране):
+# среднее и худший 1 % блоков (испорченное место — видно здесь). Плюс «пол» на полном размере против сильной
+# местной порчи. На полном размере SSIM считает потерей пропажу шумового зерна сенсора: 107 снимков
+# Galaxy S24 Ultra (качество 96–97) при качестве 85 — медиана 0,959, хотя при 150 % разница еле заметна;
+# вдвое — минимум 0,986 / 0,964, при 100 % худший 1 % — минимум 0,833 (калибровка 6.10.2026).
 PHOTO_SSIM_MEAN = 0.985
-PHOTO_SSIM_LOW = 0.90
+PHOTO_SSIM_LOW = 0.96
+PHOTO_SSIM_FLOOR = 0.80
 # Видео: AV1 (SVT-AV1). CRF — качество (меньше — лучше), preset — скорость (больше — быстрее).
 VIDEO_CRF = 28
 VIDEO_PRESET = 8
@@ -238,6 +243,19 @@ def _luma(path):
         return np.asarray(im.convert("L"), dtype=np.float32)
 
 
+def half(a):
+    """Яркость, уменьшенная вдвое усреднением 2×2."""
+    h, w = a.shape[0] // 2 * 2, a.shape[1] // 2 * 2
+    return a[:h, :w].reshape(h // 2, 2, w // 2, 2).mean((1, 3))
+
+
+def photo_check(ref, cur):
+    """(прошло ли, SSIM вдвое — среднее) для яркости оригинала ref и сжатого cur."""
+    mean, low = ssim(half(ref), half(cur))
+    _, floor = ssim(ref, cur)
+    return mean >= PHOTO_SSIM_MEAN and low >= PHOTO_SSIM_LOW and floor >= PHOTO_SSIM_FLOOR, mean
+
+
 def ssim(a, b, block=8):
     """SSIM по яркости блоками block×block: (среднее, худший 1 % блоков). a, b — массивы одного размера."""
     import numpy as np
@@ -281,6 +299,43 @@ def jpeg_segments(data):
         out.append((marker, data[i:i + 2 + n]))
         i += 2 + n
     raise Skip("испорченный JPEG")
+
+
+def jpeg_tail(data):
+    """Байты после конца основной картинки JPEG (после её EOI); b"", если там пусто или одни нули.
+
+    Там телефоны хранят карту яркости Ultra HDR, второй снимок (MPO), видео «живого фото», служебную
+    запись Samsung (SEF: время съёмки в UTC и т. п.). jpegtran и пересжатие хвост выбрасывают — а пиксели
+    основного кадра при этом совпадают, и проверка этого не видит. Не разобрался в файле — b"": дальше
+    решит проверка пикселей.
+    """
+    try:
+        _, i = jpeg_segments(data)
+    except Skip:
+        return b""
+    n = len(data)
+    while i + 4 <= n:                         # i — на маркере после заголовков
+        marker = data[i + 1]
+        if marker == 0xD9:                    # EOI — конец основной картинки
+            tail = data[i + 2:]
+            return tail if tail.strip(b"\x00") else b""
+        if 0xD0 <= marker <= 0xD7 or marker in (0x01, 0xFF):
+            i += 2 if marker != 0xFF else 1
+        else:
+            i += 2 + int.from_bytes(data[i + 2:i + 4], "big")
+        if marker == 0xDA or 0xD0 <= marker <= 0xD7:
+            # сжатые данные: идём до следующего маркера (FF00 — байт данных, FFD0–FFD7 — перезапуск)
+            while i + 1 < n and not (data[i] == 0xFF and data[i + 1] not in (0x00, 0xFF)):
+                i += 1
+        while i + 1 < n and data[i] == 0xFF and data[i + 1] == 0xFF:    # заполнители
+            i += 1
+    return b""
+
+
+# Вторая картинка (Ultra HDR, MPO) или видео («живое фото») в хвосте: их положение записано смещениями
+# от начала файла — после пересжатия основного кадра они указывали бы мимо. Такие файлы не трогаем.
+FOREIGN_TAIL = (b"\xff\xd8\xff", b"ftyp")
+ATTACHED = "к снимку приложены HDR-карта, второй снимок или видео «живого фото» — их бы потерять"
 
 
 META = set(range(0xE0, 0xEE)) | {0xEF, 0xFE}    # APP0–APP13, APP15, COM; APP14 (Adobe) — от кодировщика
@@ -348,8 +403,6 @@ def _jpeg_visual(job, dst):
     with open(job.path, "rb") as f:
         orig = f.read()
     with Image.open(job.path) as im:
-        if im.format == "MPO" or "mp" in im.info or "mpoffset" in im.info:
-            raise Skip("в файле несколько снимков (HDR, глубина) — их бы потерять")
         if im.mode not in ("RGB", "L"):                 # CMYK и прочее — редкость, а цвета легко исказить
             raise Skip("необычный JPEG — не трогаю")
         src_q = jpeg_quality(im)
@@ -369,8 +422,8 @@ def _jpeg_visual(job, dst):
             os.remove(tmp)
             with open(dst, "wb") as f:
                 f.write(data)
-            mean, low = ssim(ref, _luma(dst))
-            if mean >= PHOTO_SSIM_MEAN and low >= PHOTO_SSIM_LOW:
+            ok, mean = photo_check(ref, _luma(dst))
+            if ok:
                 job.how, job.check, job.score = tr("JPEG, качество {q}", q=q), "ssim", mean
                 return
             job.score = mean
@@ -466,6 +519,14 @@ def prepare_one(job, mode, cancel=None, gentle=False, threads=1, on_part=lambda 
         if st.st_file_attributes & 0x1:                   # «только чтение» — значит, кто-то его бережёт
             raise Skip("файл только для чтения")
         kind = job.kind
+        tail = b""
+        if kind == "jpeg":
+            with open(job.path, "rb") as f:
+                data = f.read()
+            tail = jpeg_tail(data)
+            # MPO и Ultra HDR тоже здесь: их вторая картинка всегда лежит в хвосте.
+            if any(sig in tail for sig in FOREIGN_TAIL):
+                raise Skip(ATTACHED)
         if kind == "png":
             _png(job, dst, cancel, gentle, threads)
         elif kind == "jpeg" and mode == "lossless":
@@ -474,6 +535,13 @@ def prepare_one(job, mode, cancel=None, gentle=False, threads=1, on_part=lambda 
             _jpeg_visual(job, dst)
         else:
             _video(job, dst, cancel, gentle, threads, on_part)
+        if tail:
+            # Служебная запись Samsung (SEF) отсчитывает свои смещения от конца файла — переносим как есть.
+            with open(dst, "ab") as f:
+                f.write(tail)
+            with open(dst, "rb") as f:
+                if jpeg_tail(f.read()) != tail:
+                    raise Skip("служебные данные в конце снимка не перенеслись — файл не трогаю")
         if kind == "png" or (kind == "jpeg" and mode == "lossless"):
             if not same_pixels(job.path, dst):
                 raise Skip("после пересборки пиксели не совпали — файл не трогаю")

@@ -5,6 +5,10 @@ import os
 import shutil
 import sys
 
+# В GitHub Actions вывод идёт в кодировке cp1252 — русский текст ронял бы скрипт (UnicodeEncodeError).
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
 here = os.path.dirname(os.path.abspath(__file__))
 internal = os.path.join(here, "dist", "Duplio", "_internal")
 base = os.path.join(internal, "PySide6")

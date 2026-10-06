@@ -13,6 +13,10 @@ import tempfile
 import urllib.request
 import zipfile
 
+# В GitHub Actions вывод идёт в кодировке cp1252 — русский текст ронял бы скрипт (UnicodeEncodeError).
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "third_party")
 CACHE = os.path.join(OUT, "_downloads")

@@ -3,6 +3,7 @@
 Нужны программы из third_party: python tools/fetch_tools.py (в GitHub Actions это делает сборка).
 """
 
+import io
 import os
 import shutil
 import subprocess
@@ -204,13 +205,37 @@ class VisualPhoto(Base):
         with Image.open(job.out) as im:
             self.assertEqual(im.getexif().get(0x0112), 6)
 
-    def test_visible_damage_is_refused(self):
-        # Мелкое зерно JPEG при качестве 85–90 сглаживает — проверка это видит, и файл не трогаем.
-        src = save_jpeg(photo(noise=6), self.p("noise.jpg"), quality=98)
+    def test_camera_grain_is_accepted(self):
+        # Зерно, как у снимка с телефона: JPEG 85 его слегка сглаживает. На полном размере SSIM считает это
+        # потерей (≈ 0,90), при обычном просмотре разницы нет — такой файл сжимается.
+        src = save_jpeg(photo(noise=6), self.p("grain.jpg"), quality=98)
         job = C.prepare_one(self.job(src), "visual")
-        self.assertEqual(job.skip, "без видимых потерь не сжимается")
-        self.assertLess(job.score, C.PHOTO_SSIM_MEAN)
+        self.assertEqual((job.skip, job.how), ("", "JPEG, качество 85"))
+        a, b = C._luma(src), C._luma(job.out)
+        self.assertLess(C.ssim(a, b)[0], 0.95)                 # на полном размере — «потеря»
+        self.assertGreaterEqual(job.score, C.PHOTO_SSIM_MEAN)  # а вдвое — нет
+
+    def refused_with(self, **limits):
+        src = save_jpeg(photo(noise=6), self.p("grain.jpg"), quality=98)
+        old = {k: getattr(C, k) for k in limits}
+        for k, v in limits.items():
+            setattr(C, k, v)
+        try:
+            job = C.prepare_one(self.job(src), "visual")
+        finally:
+            for k, v in old.items():
+                setattr(C, k, v)
+        self.assertEqual((job.skip, job.out), ("без видимых потерь не сжимается", ""))
         self.assertEqual(os.listdir(self.work), [])
+
+    def test_below_threshold_is_refused(self):
+        self.refused_with(PHOTO_SSIM_MEAN=0.99999)             # недостижимо: порог вообще соблюдается
+
+    def test_worst_blocks_threshold_is_refused(self):
+        self.refused_with(PHOTO_SSIM_LOW=0.99999)
+
+    def test_full_size_floor_is_refused(self):
+        self.refused_with(PHOTO_SSIM_FLOOR=0.95)               # у зерна на полном размере худший 1 % ≈ 0,8
 
     def test_low_quality_original_is_left_alone(self):
         src = save_jpeg(photo(), self.p("small.jpg"), quality=80)
@@ -226,8 +251,8 @@ class VisualPhoto(Base):
     def test_multi_picture_file_is_skipped(self):
         im = photo(400, 300)
         im.save(self.p("mpo.jpg"), "MPO", save_all=True, append_images=[photo(400, 300, seed=2)], quality=97)
-        self.assertEqual(C.prepare_one(self.job(self.p("mpo.jpg")), "visual").skip,
-                         "в файле несколько снимков (HDR, глубина) — их бы потерять")
+        for mode in ("visual", "lossless"):
+            self.assertEqual(C.prepare_one(self.job(self.p("mpo.jpg")), mode).skip, C.ATTACHED, mode)
 
     def test_ssim_sees_a_damaged_block(self):
         a = np.asarray(photo(320, 240).convert("L"), np.float32)
@@ -236,6 +261,48 @@ class VisualPhoto(Base):
         mean, low = C.ssim(a, b)
         self.assertGreater(mean, 0.9)                         # в среднем почти не видно…
         self.assertLess(low, C.PHOTO_SSIM_LOW)                # …а худшие блоки — видно
+
+
+class Tail(Base):
+    """Данные после конца основной картинки: служебная запись Samsung переносится, картинка и видео — нет."""
+
+    SEF = (b"\x00\x00\x01\n\x0e\x00\x00\x00Image_UTC_Data1731797982101\x00\x00\xa1\n\x08\x00\x00\x00MCC_Data250"
+           b"SEFH\x6b\x00\x00\x00\x03\x00\x00\x00" + bytes(20) + b"SEFT")
+
+    def with_tail(self, name, tail, **kw):
+        src = save_jpeg(photo(noise=6), self.p(name), **kw)
+        with open(src, "ab") as f:
+            f.write(tail)
+        return src
+
+    def test_samsung_record_is_carried_over_in_both_modes(self):
+        for mode, q in (("lossless", 95), ("visual", 97)):
+            src = self.with_tail(f"sef_{mode}.jpg", self.SEF, quality=q)
+            job = C.prepare_one(self.job(src), mode)
+            self.assertEqual(job.skip, "", mode)
+            with open(job.out, "rb") as f:
+                out = f.read()
+            self.assertTrue(out.endswith(self.SEF), mode)
+            self.assertEqual(C.jpeg_tail(out), self.SEF, mode)
+
+    def test_attached_image_or_video_is_left_alone_in_both_modes(self):
+        gain_map = io.BytesIO()
+        Image.new("L", (100, 60), 128).save(gain_map, "JPEG")
+        for name, tail in (("hdr.jpg", gain_map.getvalue() + self.SEF),
+                           ("motion.jpg", b"\x00\x00\x00\x18ftypmp42" + os.urandom(2000) + self.SEF)):
+            src = self.with_tail(name, tail, quality=97)
+            for mode in ("lossless", "visual"):
+                job = C.prepare_one(self.job(src), mode)
+                self.assertEqual((job.skip, job.out), (C.ATTACHED, ""), f"{name} {mode}")
+
+    def test_tail_is_found_only_after_the_picture(self):
+        for kw in ({}, {"progressive": True}, {"restart_marker_blocks": 4}, {"restart_marker_rows": 1, "progressive": True}):
+            b = io.BytesIO()
+            photo(400, 300).save(b, "JPEG", quality=90, **kw)
+            data = b.getvalue()
+            self.assertEqual(C.jpeg_tail(data), b"", kw)
+            self.assertEqual(C.jpeg_tail(data + bytes(64)), b"", kw)         # нули выравнивания — не хвост
+            self.assertEqual(C.jpeg_tail(data + self.SEF), self.SEF, kw)
 
 
 class Video(Base):

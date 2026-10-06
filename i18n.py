@@ -330,7 +330,10 @@ EN = {
     "файл не похож на JPEG": "the file doesn't look like a JPEG",
     "испорченный JPEG": "damaged JPEG",
     "jpegtran не собрал файл": "jpegtran didn't produce a file",
-    "в файле несколько снимков (HDR, глубина) — их бы потерять": "the file holds several images (HDR, depth) — they would be lost",
+    "к снимку приложены HDR-карта, второй снимок или видео «живого фото» — их бы потерять":
+        "an HDR map, a second image or a motion-photo video is attached to the photo — it would be lost",
+    "служебные данные в конце снимка не перенеслись — файл не трогаю":
+        "the extra data at the end of the photo was not carried over — file left alone",
     "необычный JPEG — не трогаю": "unusual JPEG — left alone",
     "уже сжат сильно — дальше будут видны потери": "already strongly compressed — further loss would be visible",
     "без видимых потерь не сжимается": "can't be compressed without visible loss",
