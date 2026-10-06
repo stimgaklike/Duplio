@@ -403,15 +403,68 @@ p.groups, p.marked = saved
 p.refresh()
 pump(0.2)
 
+p.tree.setCurrentItem(p.items[old])                     # в сравнении — группа, которая сейчас исчезнет
+pump(0.3)
+cards_before = len(p.cards)
 marked_before = set(p.marked)
 p.delete_marked()
 pump()
+
+
+def visible_cards():
+    return [c for c in p.cmp_body.findChildren(dups_page.FileCard) if c.isVisible()]
+
+
+check(cards_before > 0 and not p.cards and not visible_cards() and p.cmp_hint.isVisible(),
+      f"после удаления в сравнении нет карточек удалённой группы (было {cards_before}, "
+      f"видно {len(visible_cards())}, в словаре {len(p.cards)})")
 left = [f for f in glob.glob(os.path.join(root, "**", "*"), recursive=True) if os.path.isfile(f)]
 check(all(not os.path.exists(x) for x in marked_before), "все отмеченные ушли с диска")
 check(len(left) == 9 - len(marked_before), f"на диске осталось {len(left)}")
 check(os.path.exists(old), "оставленный IMG_0001 на месте")
 check(p.groups == [] and p.stack.currentIndex() == 0, "после удаления групп нет, показана заглушка")
 check(any(a[0] == "yesno" and "Корзину" in a[1] for a in answers), "было подтверждение перед удалением")
+
+
+def progress_texts(run):
+    """Тексты окна хода (QProgressDialog), пока идёт run(): опрос раз в 50 мс из цикла окна."""
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QProgressDialog
+    seen = []
+
+    def sample():
+        for d in QApplication.topLevelWidgets():
+            if isinstance(d, QProgressDialog) and d.isVisible():
+                seen.append(d.labelText())
+    timer = QTimer()
+    timer.timeout.connect(sample)
+    timer.start(50)
+    try:
+        run()
+    finally:
+        timer.stop()
+    return seen
+
+
+def slow(n_total, result):
+    """Заглушка долгой операции: прогресс по одному, 0,15 с на шаг (окно хода появляется после 0,4 с)."""
+    def run(items, hwnd=None, progress=None, **kw):
+        for i in range(1, len(items) + 1):
+            time.sleep(0.15)
+            progress(i)
+        return result(items)
+    return run
+
+
+# Окно удаления: счётчик «N из M» идёт, а не стоит на месте.
+real_bin = dupcore.to_recycle_bin
+dupcore.to_recycle_bin = slow(8, lambda items: (list(items), []))
+try:
+    texts = progress_texts(lambda: p._delete_with_progress([f"x{i}.jpg" for i in range(8)]))
+finally:
+    dupcore.to_recycle_bin = real_bin
+counts = sorted({t for t in texts if t.startswith("Отправляю в Корзину: ") and t.endswith(" из 8")})
+check(len(counts) >= 3, f"в окне удаления идёт счётчик «N из 8»: {counts}")
 
 # Ход поиска на большой папке: шаг 3, 40 из 100 ГБ за 400 секунд.
 GB = 1024 ** 3

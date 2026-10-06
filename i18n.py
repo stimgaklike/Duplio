@@ -294,6 +294,8 @@ EN = {
     "Эти файлы оставлены как есть:\n\n": "These files were left as they are:\n\n",
     "Эти файлы или папки не удалось прочитать:\n\n": "These files or folders could not be read:\n\n",
     "Заменяю файлы…": "Replacing files…",
+    "Заменяю файлы: {done} из {total}": "Replacing files: {done} of {total}",
+    "Отправляю в Корзину: {done} из {total}": "Moving to the Recycle Bin: {done} of {total}",
     "Заменять нечего:\n\n": "Nothing to replace:\n\n",
     "Заменить {n} {files} сжатыми копиями? Освободится {size}.\n\nОригиналы уйдут в Корзину — вернуть можно "
     "оттуда. Имена и даты файлов останутся прежними.":

@@ -734,7 +734,7 @@ def check_before_replace(jobs):
     return ok, problems
 
 
-def replace(jobs, hwnd=None, progress=None, recycle=None, batch=50):
+def replace(jobs, hwnd=None, progress=None, recycle=None, batch=None):
     """Заменить оригиналы сжатыми копиями. Возвращает (заменённые, проблемы [(путь, причина)]).
 
     Для каждого файла: копия кладётся рядом под временным именем и сверяется по содержимому →
@@ -745,6 +745,7 @@ def replace(jobs, hwnd=None, progress=None, recycle=None, batch=50):
     recycle = recycle or (lambda paths: dupcore.to_recycle_bin(paths, hwnd=hwnd))
     ok, problems = check_before_replace(jobs)
     done = []
+    batch = batch or min(50, dupcore.step_for(len(ok)))
     for i in range(0, len(ok), batch):
         if progress:
             progress(i)

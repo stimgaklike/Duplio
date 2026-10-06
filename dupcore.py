@@ -426,9 +426,16 @@ def has_recycle_bin(drive):
     return kind not in (2, 4)        # DRIVE_REMOVABLE, DRIVE_REMOTE
 
 
-def to_recycle_bin(paths, batch=100, hwnd=None, progress=None):
+def step_for(total):
+    """Сколько файлов за одну операцию: около 40 шагов на всё — счётчик в окне идёт плавно,
+    а операций немного (одна операция на много файлов в разы быстрее). От 1 до 100."""
+    return max(1, min(100, total // 40))
+
+
+def to_recycle_bin(paths, batch=None, hwnd=None, progress=None):
     """Отправить файлы в Корзину. Возвращает (удалённые, оставшиеся) — точные абсолютные пути."""
     removed, left = [], []
+    batch = batch or step_for(len(paths))
     for i in range(0, len(paths), batch):
         part = [os.path.abspath(p) for p in paths[i:i + batch]]
         op = _SHFILEOPSTRUCTW()

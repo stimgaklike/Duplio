@@ -196,6 +196,17 @@ class KeepAndDelete(unittest.TestCase):
         self.assertFalse(os.path.exists(self.new))
         self.assertTrue(os.path.exists(self.old))
 
+    def test_progress_moves_in_small_steps(self):
+        # Счётчик «N из M» в окне идёт плавно: около 40 шагов, а не скачок 0 → всё. Файлов нет —
+        # в настоящую Корзину ничего не попадает (несуществующий файл считается убранным).
+        paths = [os.path.join(self.root, f"нет_{i}.jpg") for i in range(120)]
+        calls = []
+        removed, left = dupcore.to_recycle_bin(paths, progress=calls.append)
+        self.assertEqual((len(removed), left), (120, []))
+        self.assertEqual(calls[-1], 120)
+        self.assertEqual(len(calls), 40)
+        self.assertEqual([dupcore.step_for(n) for n in (1, 39, 400, 10_000)], [1, 1, 10, 100])
+
 
 class Kinds(unittest.TestCase):
     def setUp(self):

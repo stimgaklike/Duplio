@@ -465,7 +465,7 @@ class MainWindow(QMainWindow):
         QApplication.instance().setStyleSheet(theme.stylesheet(self.colors, resource("icons")))
         theme.dark_title_bar(self, self.mode == "dark")
         if self.dups.groups:
-            self.dups.current_group = None
+            self.dups.clear_cards()
             self.dups.refresh()
         if self.compress.ready:
             self.compress.refresh()

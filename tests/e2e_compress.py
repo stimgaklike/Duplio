@@ -321,6 +321,46 @@ shot("qt_compress_visual.png")
 c.show_skipped()
 check(any(a[0] == "info" and "уже сжат сильно" in a[1] for a in answers), "список несжатых с причинами")
 
+def progress_texts(run):
+    """Тексты окна хода (QProgressDialog), пока идёт run(): опрос раз в 50 мс из цикла окна."""
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QProgressDialog
+    seen = []
+
+    def sample():
+        for d in QApplication.topLevelWidgets():
+            if isinstance(d, QProgressDialog) and d.isVisible():
+                seen.append(d.labelText())
+    timer = QTimer()
+    timer.timeout.connect(sample)
+    timer.start(50)
+    try:
+        run()
+    finally:
+        timer.stop()
+    return seen
+
+
+def slow(n_total, result):
+    """Заглушка долгой операции: прогресс по одному, 0,15 с на шаг (окно хода появляется после 0,4 с)."""
+    def run(items, hwnd=None, progress=None, **kw):
+        for i in range(1, len(items) + 1):
+            time.sleep(0.15)
+            progress(i)
+        return result(items)
+    return run
+
+
+# Окно замены: счётчик «N из M» идёт.
+real_replace = compcore.replace
+compcore.replace = slow(8, lambda items: (list(items), []))
+try:
+    texts = progress_texts(lambda: c._replace_with_progress(list(range(8))))
+finally:
+    compcore.replace = real_replace
+counts = sorted({t for t in texts if t.startswith("Заменяю файлы: ") and t.endswith(" из 8")})
+check(len(counts) >= 3, f"в окне замены идёт счётчик «N из 8»: {counts}")
+
 # ---------- установщик просит закрыться (тот же канал, что у второго запуска)
 from PySide6.QtCore import QByteArray  # noqa: E402
 from PySide6.QtNetwork import QLocalSocket  # noqa: E402

@@ -887,13 +887,22 @@ class DupsPage(QWidget):
 
     # ---------- сравнение
 
+    def clear_cards(self):
+        """Убрать карточки сравнения — после удаления и смены темы их надо построить заново.
+
+        Только «current_group = None» мало: если после этого группы нет, show_group(None) не видит смены
+        и оставляет на экране карточки удалённых файлов.
+        """
+        self.current_group = None
+        for c in self.cards.values():
+            c.setParent(None)
+            c.deleteLater()
+        self.cards = {}
+
     def show_group(self, group):
         if group is not self.current_group:
+            self.clear_cards()
             self.current_group = group
-            for c in self.cards.values():
-                c.setParent(None)
-                c.deleteLater()
-            self.cards = {}
             if group:
                 for m in group:
                     c = FileCard(m, self.short_dir(m.path), self.colors)
@@ -974,7 +983,9 @@ class DupsPage(QWidget):
         th = threading.Thread(target=work, daemon=True)
         th.start()
         while th.is_alive():
-            dlg.setValue(result.get("n", 0))
+            n = result.get("n", 0)
+            dlg.setValue(n)
+            dlg.setLabelText(tr("Отправляю в Корзину: {done} из {total}", done=num(n), total=num(len(paths))))
             QApplication.processEvents()
             th.join(0.05)
         dlg.close()
@@ -1031,7 +1042,7 @@ class DupsPage(QWidget):
         self.marked &= alive               # отметки файлов, чьи группы распались, — больше не считаются
         for p in removed:
             self.thumbs.forget(p)
-        self.current_group = None
+        self.clear_cards()
         self.refresh()
         if not self.groups:
             self.empty.setText(tr("Все отмеченные копии в Корзине."))

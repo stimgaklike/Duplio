@@ -1076,11 +1076,15 @@ class CompressPage(QWidget):
         th = threading.Thread(target=work, daemon=True)
         th.start()
         while th.is_alive():
-            dlg.setValue(result.get("n", 0))
+            n = result.get("n", 0)
+            dlg.setValue(n)
+            dlg.setLabelText(tr("Заменяю файлы: {done} из {total}", done=num(n), total=num(len(jobs))))
             QApplication.processEvents()
             th.join(0.05)
         dlg.close()
-        return result.get("v", ([], [(j.path, "не удалось") for j in jobs]))
+        if "v" in result:
+            return result["v"]
+        return [], [(j.path, "не удалось") for j in jobs]       # поток упал — ничего не заменено
 
     def replace_marked(self):
         jobs = self._marked_jobs()
