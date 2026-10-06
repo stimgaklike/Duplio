@@ -308,18 +308,32 @@ class SettingsFile(unittest.TestCase):
         settings.PATH = os.path.join(d, "settings.json")
         try:
             with open(settings.PATH, "w", encoding="utf-8") as f:
-                json.dump({"load": "turbo", "theme": 5, "kinds": ["photo", "x"], "close_to_tray": "да",
+                json.dump({"load": "turbo", "theme": 5, "kinds": ["photo", "x"], "close_action": "взорвать",
                            "keep_rule": "newest", "last_update_check": "вчера"}, f)
             cfg = settings.load()
             self.assertEqual(cfg["load"], "gentle")
             self.assertEqual(cfg["theme"], "system")
             self.assertEqual(cfg["kinds"], ["photo", "video"])
-            self.assertIs(cfg["close_to_tray"], True)
+            self.assertEqual(cfg["close_action"], "ask")
             self.assertEqual(cfg["keep_rule"], "newest")          # правильное значение сохраняется
             self.assertEqual(cfg["last_update_check"], 0)
             with open(settings.PATH, "w", encoding="utf-8") as f:
                 f.write("{не json")
             self.assertEqual(settings.load()["load"], "gentle")
+        finally:
+            settings.PATH = saved
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_old_setting_close_to_tray_false_means_quit(self):
+        import json
+        import settings
+        d = tempfile.mkdtemp(prefix="cfg_")
+        saved = settings.PATH
+        settings.PATH = os.path.join(d, "settings.json")
+        try:
+            with open(settings.PATH, "w", encoding="utf-8") as f:
+                json.dump({"close_to_tray": False}, f)                 # как сохраняла версия 1.0.0
+            self.assertEqual(settings.load()["close_action"], "quit")
         finally:
             settings.PATH = saved
             shutil.rmtree(d, ignore_errors=True)

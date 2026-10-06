@@ -126,12 +126,13 @@ class SettingsPage(QScrollArea):
         root.addWidget(U.label(tr("Когда закрываешь окно"), "h2"))
         self.close_group = QButtonGroup(self)
         self.close_radios = {}
-        for value, title in ((True, tr("Сворачивать в трей — значок у часов, поиск продолжается")),
-                             (False, tr("Закрывать программу"))):
+        for value, title in (("ask", tr("Спрашивать каждый раз")),
+                             ("tray", tr("Сворачивать в трей — значок у часов, поиск продолжается")),
+                             ("quit", tr("Закрывать программу"))):
             r = QRadioButton(title)
             self.close_group.addButton(r)
-            r.setChecked(bool(cfg.get("close_to_tray", True)) == value)
-            r.toggled.connect(lambda on, v=value: on and self._set("close_to_tray", v, self.close_changed))
+            r.setChecked(cfg.get("close_action", "ask") == value)
+            r.toggled.connect(lambda on, v=value: on and self._set("close_action", v, self.close_changed))
             self.close_radios[value] = r
             root.addWidget(r)
 
@@ -190,6 +191,14 @@ class SettingsPage(QScrollArea):
     def _lang_picked(self, key):
         self._set("lang", key, None)
         self._show_lang_note(key != self._lang_at_start)
+
+    def show_close_action(self):
+        """Обновить переключатель после «Больше не спрашивать» в окне закрытия."""
+        r = self.close_radios.get(self.cfg.get("close_action", "ask"))
+        if r is not None:
+            r.blockSignals(True)
+            r.setChecked(True)
+            r.blockSignals(False)
 
     def set_update_status(self, text):
         self.update_status.setText(text)

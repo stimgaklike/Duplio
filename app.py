@@ -90,7 +90,7 @@ class UpdateDialog(QDialog):
                 return
             log.info("Обновление: запускаю установщик %s", self.path)
             updater.install(self.path)
-            self.win.quit_app()
+            self.win.quit_app(confirmed=True)
             return
         self.go.setEnabled(False)
         self.bar.show()
@@ -361,9 +361,12 @@ class MainWindow(QMainWindow):
             text = tr("Точных копий не нашлось.")
         self.tray.showMessage(tr("Поиск завершён"), text, self.icon, 8000)
 
-    def quit_app(self):
+    def quit_app(self, confirmed=False):
+        """confirmed — про идущий поиск уже спросили (например, в окне обновления)."""
         self.quitting = True
+        self._quit_confirmed = confirmed
         self.close()
+        self._quit_confirmed = False
 
     def restart(self):
         """Перезапуск (например, после смены языка): новая копия поднимется, когда эта закроется."""
@@ -376,7 +379,25 @@ class MainWindow(QMainWindow):
         self.quit_app()
 
     def closeEvent(self, e):
-        if self.cfg.get("close_to_tray", True) and not self.quitting:
+        action = "quit" if self.quitting else self.cfg.get("close_action", "ask")
+        warned = getattr(self, "_quit_confirmed", False)
+        if action == "ask":
+            warned = True                       # в окне вопроса про идущий поиск уже сказано
+            action, remember = U.ask_close(self, busy=self.dups.busy)
+            if action is None:                  # «Отмена» — окно остаётся
+                e.ignore()
+                return
+            if remember:
+                self.cfg["close_action"] = action
+                settings.save(self.cfg)
+                self.settings.show_close_action()
+        if action == "quit" and self.dups.busy and not warned and not U.ask_yes_no(
+                self, tr("Идёт поиск. Закрыть программу и остановить его? Найденное будет потеряно."),
+                yes=tr("Закрыть"), no=tr("Продолжить поиск")):
+            e.ignore()
+            self.quitting = False
+            return
+        if action == "tray":
             e.ignore()
             self.hide()
             if not self.cfg.get("tray_hint_shown"):

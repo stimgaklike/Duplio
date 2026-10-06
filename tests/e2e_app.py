@@ -519,17 +519,51 @@ check(os.path.exists(settings.PATH), "настройки сохранены (в�
 w.tabs.setCurrentWidget(w.compress)
 shot("qt_compress.png")
 
-# Трей: крестик прячет окно, программа работает; «Выход» — закрывает.
-cfg["close_to_tray"] = True
+# Крестик: спрашивает «в трей или закрыть»; «Отмена» — окно остаётся; «Больше не спрашивать» запоминается.
 quit_called = []
 qapp.quit = lambda: quit_called.append(True)
+asked_close = []
+cfg["close_action"] = "ask"
+ui_util.ask_close = lambda parent, busy=False: asked_close.append(busy) or (None, False)
 w.close()
 pump(0.3)
-check(not w.isVisible() and w.tray.isVisible() and not quit_called, "крестик сворачивает в трей, программа работает")
+check(asked_close and w.isVisible() and not quit_called, "крестик спрашивает; «Отмена» оставляет окно")
+ui_util.ask_close = lambda parent, busy=False: ("tray", True)
+w.close()
+pump(0.3)
+check(not w.isVisible() and w.tray.isVisible() and not quit_called and cfg["close_action"] == "tray"
+      and w.settings.close_radios["tray"].isChecked(),
+      "«Свернуть в трей» + «Больше не спрашивать»: окно в трее, выбор запомнен и виден в настройках")
 check(cfg["tray_hint_shown"], "подсказка про трей показана один раз")
+asked_close.clear()
+w.bring_back()
+pump(0.3)
+w.close()                                   # теперь без вопроса — сразу в трей
+pump(0.3)
+check(not asked_close and not w.isVisible(), "после «Больше не спрашивать» вопрос не появляется")
 w.bring_back()
 pump(0.3)
 check(w.isVisible(), "щелчок по значку возвращает окно")
+# Закрытие во время поиска: предупреждение; «Продолжить поиск» — программа остаётся.
+p.busy = True
+warned_texts = []
+ui_util.ask_yes_no = lambda parent, text, **k: warned_texts.append(text) or False
+w.quit_app()
+pump(0.3)
+check(any("Идёт поиск" in t for t in warned_texts) and not quit_called and w.isVisible(),
+      "«Выход» во время поиска предупреждает; «Продолжить поиск» оставляет программу")
+cfg["close_action"] = "ask"
+warned_texts.clear()
+ui_util.ask_close = lambda parent, busy=False: asked_close.append(busy) or ("quit", False)
+asked_close.clear()
+w.close()
+pump(0.3)
+check(asked_close == [True] and not warned_texts and quit_called,
+      "выбор «Закрыть» в окне вопроса (где сказано про поиск) не переспрашивает")
+p.busy = False
+quit_called.clear()
+w.show()
+pump(0.3)
 w.quit_app()
 pump(0.3)
 check(quit_called and not w.tray.isVisible(), "«Выход» закрывает программу и убирает значок")

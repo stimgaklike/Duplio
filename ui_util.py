@@ -23,6 +23,37 @@ def ask_yes_no(parent, text, yes=None, no=None):
     return box.clickedButton() is b_yes
 
 
+def ask_close(parent, busy=False):
+    """Крестик: свернуть в трей или закрыть? Возвращает (выбор: "tray" / "quit" / None — отмена, «больше не спрашивать»)."""
+    from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QPushButton
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(APP_TITLE)
+    lay = QVBoxLayout(dlg)
+    lay.setContentsMargins(22, 18, 22, 18)
+    lay.setSpacing(12)
+    lay.addWidget(label(tr("Свернуть Duplio в трей или закрыть?"), "h2"))
+    text = tr("В трее программа продолжает работать: значок у часов, поиск не прерывается.")
+    if busy:
+        text += "\n" + tr("Сейчас идёт поиск — если закрыть программу, он остановится.")
+    lay.addWidget(label(text, "muted", wrap=True))
+    remember = QCheckBox(tr("Больше не спрашивать (можно поменять в «Настройках»)"))
+    lay.addWidget(remember)
+    row = QHBoxLayout()
+    row.addStretch()
+    choice = {"v": None}
+    for key, title, name in ((None, tr("Отмена"), None), ("quit", tr("Закрыть программу"), None),
+                             ("tray", tr("Свернуть в трей"), "accent")):
+        b = QPushButton(title)
+        if name:
+            b.setObjectName(name)
+            b.setDefault(True)
+        b.clicked.connect(lambda _=False, k=key: (choice.__setitem__("v", k), dlg.accept()))
+        row.addWidget(b)
+    lay.addLayout(row)
+    dlg.exec()
+    return choice["v"], remember.isChecked() and choice["v"] is not None
+
+
 def info(parent, text):
     box = QMessageBox(QMessageBox.Information, APP_TITLE, text, parent=parent)
     box.addButton(tr("Понятно"), QMessageBox.AcceptRole)

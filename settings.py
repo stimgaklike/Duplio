@@ -14,7 +14,7 @@ DEFAULTS = {
     "kinds": ["photo", "video"],
     "keep_rule": "oldest",
     "last_folder": "",
-    "close_to_tray": True,       # крестик сворачивает в трей (значок у часов), а не закрывает программу
+    "close_action": "ask",       # крестик: ask — спросить, tray — свернуть в трей, quit — закрыть программу
     "tray_hint_shown": False,    # подсказку «я в трее» показываем один раз
     "lang": "auto",              # auto / ru / en
     "check_updates": True,       # проверять обновления при запуске (не чаще раза в сутки)
@@ -29,6 +29,8 @@ def load():
         with open(path, encoding="utf-8") as f:
             saved = json.load(f)
         data.update({k: v for k, v in saved.items() if k in DEFAULTS})
+        if "close_action" not in saved and saved.get("close_to_tray") is False:   # настройка версии 1.0.0
+            data["close_action"] = "quit"
     except (OSError, ValueError, AttributeError):
         pass
     return sanitize(data)
@@ -39,6 +41,7 @@ ALLOWED = {
     "theme": {"system", "light", "dark"},
     "keep_rule": {"oldest", "newest", "shortest"},
     "lang": {"auto", "ru", "en"},
+    "close_action": {"ask", "tray", "quit"},
 }
 KINDS = {"photo", "video", "audio", "docs", "archives", "other"}
 
@@ -51,7 +54,7 @@ def sanitize(data):
     kinds = data.get("kinds")
     if not isinstance(kinds, list) or not set(kinds) <= KINDS:
         data["kinds"] = list(DEFAULTS["kinds"])
-    for key in ("close_to_tray", "tray_hint_shown", "check_updates"):
+    for key in ("tray_hint_shown", "check_updates"):
         if not isinstance(data.get(key), bool):
             data[key] = DEFAULTS[key]
     if not isinstance(data.get("last_folder"), str):

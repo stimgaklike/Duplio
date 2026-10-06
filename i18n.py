@@ -252,6 +252,17 @@ EN = {
     "Сворачивать в трей — значок у часов, поиск продолжается":
         "Minimize to tray — icon next to the clock, the scan keeps running",
     "Закрывать программу": "Exit the app",
+    "Спрашивать каждый раз": "Ask every time",
+    "Свернуть Duplio в трей или закрыть?": "Minimize Duplio to the tray or exit?",
+    "В трее программа продолжает работать: значок у часов, поиск не прерывается.":
+        "In the tray the app keeps running: icon next to the clock, the scan continues.",
+    "Сейчас идёт поиск — если закрыть программу, он остановится.": "A scan is running — exiting will stop it.",
+    "Больше не спрашивать (можно поменять в «Настройках»)": "Don't ask again (you can change this in Settings)",
+    "Закрыть программу": "Exit",
+    "Свернуть в трей": "Minimize to tray",
+    "Идёт поиск. Закрыть программу и остановить его? Найденное будет потеряно.":
+        "A scan is running. Exit and stop it? The results will be lost.",
+    "Продолжить поиск": "Keep scanning",
     "Что программа хранит на компьютере": "What the app stores on your computer",
     "Только один маленький файл с этими настройками (меньше 1 КБ):":
         "Only one small file with these settings (under 1 KB):",
