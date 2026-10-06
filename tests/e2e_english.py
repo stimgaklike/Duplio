@@ -283,7 +283,63 @@ mp.output_btns["copies"].click()
 mp.copies.setText("")
 mp.run_marked()                              # без папки — предупреждение
 w.grab().save(os.path.join(shots, "en_meta.png"))
-for page in (w.compress, w.meta, w.settings):
+# ---- «Конвертация»: подготовка, было → станет, пропущенные, сравнение крупно, замена, перетаскивание, трей
+import convcore  # noqa: E402
+from test_convcore import iphone_mov  # noqa: E402
+
+convcore.WORK = tempfile.mkdtemp(prefix="dup_en_conv_work_")
+atexit.register(shutil.rmtree, convcore.WORK, True)
+vroot = tempfile.mkdtemp(prefix="dup_en_conv_")
+atexit.register(shutil.rmtree, vroot, True)
+iphone_mov(os.path.join(vroot, "IMG_1.MOV"))
+iphone_mov(os.path.join(vroot, "live.MOV"), keys=[(convcore.LIVE_KEY, "1")])
+iphone_mov(os.path.join(vroot, "mj.mov"), video=("-c:v", "mjpeg"))
+cv = w.convert
+w.tabs.setCurrentWidget(cv)
+pump(0.2)
+scan_widgets("конвертация: старт")
+cv.folder.setText(vroot)
+cv.start()
+cv._show_progress(0, 0, 0, 3, "")
+scan_widgets("конвертация: обход папок")
+for note in filter(None, [w.busy_note()]):
+    said.extend(x for x in note if isinstance(x, str))
+t0 = time.time()
+while cv.busy and time.time() - t0 < 60:
+    pump(0.05)
+pump(1)
+scan_widgets("конвертация: готово")
+cv.tree.setCurrentItem(cv.items[cv.ready[0].path])
+pump(1)
+scan_widgets("конвертация: было → станет")
+dlg = compress_page.CompareDialog(cv, cv.ready, 0)
+dlg.show()
+pump(0.4)
+scan_widgets("конвертация: сравнение крупно")
+dlg.close()
+cv.show_skipped()
+cv.busy = True
+cv._show_progress(50, 100, 1, 3, "IMG_1.MOV")
+cv._update_summary()
+scan_widgets("конвертация: ход")
+said.extend(w.drop_plan([vroot])[1:])
+cv.busy = False
+for note in filter(None, [w.busy_note()]):
+    said.extend(x for x in note if isinstance(x, str))
+for items in ([vroot], [os.path.join(vroot, "IMG_1.MOV"), vroot]):
+    said.extend(w.drop_plan(items)[1:])
+w.hide()
+w._convert_finished(1, 0)
+w._convert_finished(0, 0)
+w.show()
+cv.replace_marked()
+pump()
+scan_widgets("конвертация: после замены")
+w.grab().save(os.path.join(shots, "en_convert.png"))
+for t in tray_said:
+    if CYR.search(t):
+        found.setdefault(t, "трей")
+for page in (w.compress, w.convert, w.meta, w.settings):
     w.tabs.setCurrentWidget(page)
     pump(0.3)
     scan_widgets(page.__class__.__name__)

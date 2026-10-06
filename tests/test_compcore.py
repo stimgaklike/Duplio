@@ -14,6 +14,7 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(__file__))                  # test_convcore — ролик «как с iPhone»
 import numpy as np  # noqa: E402
 from PIL import Image, ImageCms, ImageDraw, PngImagePlugin  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -447,10 +448,26 @@ class Video(Base):
         self.assertGreater(bad_mean - bad_low, 15)       # …хотя по среднему она тонет
         self.assertFalse([f for f in os.listdir(self.root) if f.startswith("vmaf_")])   # журнал убран
 
-    def test_mov_is_left_alone_with_clear_reason(self):
-        src = make_video(self.p("IMG_0685.MOV"), seconds=1, extra=("-b:v", "6M"))      # как у iPhone
+    def test_mov_becomes_mp4_with_apple_metadata_in_place(self):
+        from test_convcore import APPLE, LENS, iphone_mov, mdta, tags, top_meta, video_trak_meta
+        src = iphone_mov(self.p("IMG_0685.MOV"), video=("-c:v", "libopenh264", "-b:v", "6M"))  # как у iPhone
         job = C.prepare_one(self.job(src), "visual")
-        self.assertEqual((job.skip, job.out), ("MOV в AV1 не сохраняется — такие ролики пока не сжимаю", ""))
+        self.assertEqual(job.skip, "")
+        self.assertEqual(os.path.basename(job.target), "IMG_0685.MP4")
+        self.assertTrue(job.out.endswith("IMG_0685.MP4"))
+        with open(job.out, "rb") as f:
+            self.assertEqual(f.read(12)[4:12], b"ftypisom")
+        self.assertEqual(C._video_stream(C.probe(job.out))["codec_name"], "av1")
+        self.assertEqual(tags(job.out), tags(src))                 # геометка, дата, модель — те же
+        self.assertEqual(top_meta(job.out), [mdta(APPLE)])         # там же, где у iPhone (видит Проводник)
+        self.assertEqual(video_trak_meta(job.out), [mdta(LENS)])
+
+    def test_live_photo_video_is_left_alone(self):
+        from test_convcore import APPLE, iphone_mov
+        src = iphone_mov(self.p("IMG_0686.MOV"), keys=APPLE + [(C.LIVE_KEY, "8D5F0A3B")],
+                         video=("-c:v", "libopenh264", "-b:v", "6M"))
+        job = C.prepare_one(self.job(src), "visual")
+        self.assertEqual((job.skip, job.out, job.target), (C.LIVE, "", ""))
         self.assertEqual(os.listdir(self.work), [])
 
     def test_av1_is_left_alone(self):
@@ -579,6 +596,18 @@ class Replace(Base):
         done, problems = C.replace([job], recycle=self.fake_bin)
         self.assertEqual((done, problems), ([], [(job.path, "файл изменился после подготовки")]))
         self.assertEqual(os.listdir(self.bin), [])
+
+    def test_two_files_with_one_new_name_second_is_not_replaced(self):
+        a, b = self.prepared("a.jpg"), self.prepared("b.jpg")
+        a.target = b.target = self.p("same.jpg")             # как два MOV с одним новым именем
+        with open(b.path, "rb") as f:
+            b_data = f.read()
+        done, problems = C.replace([a, b], recycle=self.fake_bin)
+        self.assertEqual([j.path for j in done], [a.path])
+        self.assertEqual(problems, [(b.path, "файл same.jpg уже есть рядом — подготовь заново")])
+        self.assertEqual(sorted(os.listdir(self.bin)), ["a.jpg"])             # оригинал b — на месте
+        with open(b.path, "rb") as f:
+            self.assertEqual(f.read(), b_data)
 
     def test_real_recycle_bin(self):
         job = self.prepared("корзина-тест.jpg")

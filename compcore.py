@@ -3,7 +3,8 @@
 Два шага. «Подготовить» — сжатые копии складываются в рабочую папку, оригиналы не трогаются;
 каждая копия проверена: в строгом режиме пиксели совпадают байт в байт, в режиме «без видимых
 потерь» — числом (фото — SSIM, видео — VMAF). «Заменить» — оригинал уходит в Корзину, на его место встаёт сжатый файл
-с теми же датами. Тип файла (расширение) не меняется никогда.
+с теми же датами. Расширение не меняется — кроме MOV: AV1 в MOV не записывается, ролик становится .mp4
+(Job.target), метаданные переносятся блоками оригинала (convcore.carry_meta).
 """
 
 import ctypes
@@ -26,8 +27,13 @@ from i18n import tr
 JPEG_EXT = {".jpg", ".jpeg", ".jfif"}
 PNG_EXT = {".png"}
 PHOTO_EXT = JPEG_EXT | PNG_EXT
-# Только контейнеры, в которые AV1 кладётся без смены расширения, а звук копируется как есть.
+# Контейнеры, где звук копируется как есть. MOV — с новым расширением: AV1 кладётся только в MP4.
 VIDEO_EXT = {".mp4", ".m4v", ".mov", ".mkv", ".webm"}
+MOV_EXT = {".mov", ".qt"}
+# Видео «живого фото» iPhone: связано со снимком этим ключом; Фото Apple ищут пару по нему и по имени —
+# после смены имени и формата пара распалась бы.
+LIVE_KEY = "com.apple.quicktime.content.identifier"
+LIVE = "видео «живого фото» — после конвертации оно отвяжется от своего снимка"
 
 MODES = {"lossless": "Строго без потерь", "visual": "Без видимых потерь"}
 KINDS = {"photo": "Фото", "video": "Видео"}
@@ -102,6 +108,7 @@ def _run(args, cancel=None, gentle=False, on_line=None, ok_codes=(0,), src=None,
     err_file = tempfile.TemporaryFile()
     fin = open(src, "rb") if src else None
     fout = open(dst, "wb") if dst else None
+    p = None
     try:
         p = subprocess.Popen(args, stdin=fin or subprocess.DEVNULL,
                              stdout=fout or (subprocess.PIPE if on_line else subprocess.DEVNULL),
@@ -121,6 +128,8 @@ def _run(args, cancel=None, gentle=False, on_line=None, ok_codes=(0,), src=None,
                 if cancel is not None and cancel.is_set():
                     p.kill()
                     p.wait()
+                    if reader:
+                        reader.join(5)         # поток дочитает до конца — потом его канал закроется
                     raise Cancelled
         if reader:
             reader.join(5)
@@ -128,7 +137,7 @@ def _run(args, cancel=None, gentle=False, on_line=None, ok_codes=(0,), src=None,
         err = err_file.read().decode("utf-8", "replace")
     finally:
         err_file.close()
-        for f in (fin, fout):
+        for f in (fin, fout, p and p.stdout):
             if f:
                 f.close()
     if p.returncode not in ok_codes:
@@ -150,11 +159,13 @@ class Job:
     check: str = ""           # чем проверено: "pixels" — пиксели совпали; "ssim" — по числу score
     score: float = 0.0
     skip: str = ""            # почему не сжали
+    target: str = ""          # новое имя после замены (конвертация: .MOV → .MP4); "" — имя прежнее
+    note: str = ""            # что не перенеслось (служебные дорожки и т. п.)
 
     @property
     def kind(self):
         ext = os.path.splitext(self.path)[1].lower()
-        return "video" if ext in VIDEO_EXT else "png" if ext in PNG_EXT else "jpeg"
+        return "video" if ext in dupcore.VIDEO_EXT else "png" if ext in PNG_EXT else "jpeg"
 
     @property
     def is_video(self):
@@ -200,9 +211,20 @@ def missing_tools(kinds, mode):
     return [n for n in need if not tool(n)]
 
 
-def _work_name(path):
+def target_for(path, ext, taken=()):
+    """Имя нового файла рядом с оригиналом: то же имя, новое расширение (регистр — как у старого);
+    занято на диске или другим файлом этой же подготовки — «имя (2).mp4»."""
+    stem, old = os.path.splitext(path)
+    ext = ext.upper() if old.isupper() else ext
+    cand, n = stem + ext, 2
+    while os.path.lexists(cand) or os.path.normcase(cand) in taken:
+        cand, n = f"{stem} ({n}){ext}", n + 1
+    return cand
+
+
+def _work_name(path, work=None, name=None):
     h = hashlib.blake2b(os.path.normcase(os.path.abspath(path)).encode("utf-8"), digest_size=6).hexdigest()
-    return os.path.join(WORK, f"{h}_{os.path.basename(path)}")
+    return os.path.join(work or WORK, f"{h}_{name or os.path.basename(path)}")
 
 
 def clean_work():
@@ -474,6 +496,8 @@ def _video(job, dst, cancel, gentle, threads, on_part):
         raise Skip("в файле нет видео")
     if v.get("codec_name") == "av1":
         raise Skip("уже в AV1")
+    if LIVE_KEY in (info.get("format", {}).get("tags") or {}):
+        raise Skip(LIVE)
     if v.get("color_transfer") in ("smpte2084", "arib-std-b67") or any(
             "DOVI" in str(sd.get("side_data_type", "")).upper() for sd in v.get("side_data_list", [])):
         raise Skip("HDR-видео — не трогаю, чтобы не испортить цвета")
@@ -483,9 +507,7 @@ def _video(job, dst, cancel, gentle, threads, on_part):
         duration = 0
     deep = "10" in v.get("pix_fmt", "") or "12" in v.get("pix_fmt", "") or int(v.get("bits_per_raw_sample") or 8) > 8
     ext = os.path.splitext(job.path)[1].lower()
-    if ext == ".mov":                     # ffmpeg: «av1 only supported in MP4 and AVIF»; расширение не меняем
-        raise Skip("MOV в AV1 не сохраняется — такие ролики пока не сжимаю")
-    n_audio =sum(s.get("codec_type") == "audio" for s in info.get("streams", []))
+    n_audio = sum(s.get("codec_type") == "audio" for s in info.get("streams", []))
     four_k = int(v.get("width") or 0) * int(v.get("height") or 0) >= 0.9 * 3840 * 2160
     steps = len(VIDEO_CRFS)
     for step, crf in enumerate(VIDEO_CRFS):
@@ -498,7 +520,9 @@ def _video(job, dst, cancel, gentle, threads, on_part):
                 # Без этого кадры ложатся на ровную сетку 1/60: движение дёргается, звук расходится, а
                 # проверка сравнивает кадры со сдвигом и бракует хороший ролик (ночной 4K60 — SSIM 0,930 вместо 0,982).
                 "-fps_mode", "passthrough", "-enc_time_base", "demux"]
-        if ext in (".mp4", ".m4v", ".mov"):
+        if ext in MOV_EXT:
+            pass            # moov — в конце: туда carry_meta кладёт метаданные оригинала, не сдвигая видео
+        elif ext in (".mp4", ".m4v"):
             args += ["-movflags", "+faststart+use_metadata_tags"]
         args += ["-progress", "pipe:1", "-nostats", dst]
 
@@ -527,6 +551,11 @@ def _video(job, dst, cancel, gentle, threads, on_part):
         job.score = mean
         on_part((step + 1) / steps)
         if mean >= VIDEO_VMAF_MEAN and low >= VIDEO_VMAF_LOW:
+            if ext in MOV_EXT:
+                import convcore                # convcore сам опирается на compcore — берём при вызове
+                convcore.carry_meta(job.path, dst)
+                if convcore._tags(probe(dst)) != convcore._tags(info):
+                    raise Skip("после сжатия не перенеслись метаданные")
             on_part(1.0)
             job.how, job.check = tr("AV1, качество CRF {crf}", crf=crf), "vmaf"
             return
@@ -582,10 +611,17 @@ def video_vmaf(orig, new, four_k=False, cancel=None, gentle=False, threads=4):
             pass
 
 
-def prepare_one(job, mode, cancel=None, gentle=False, threads=1, on_part=lambda f: None):
-    """Сжать один файл в рабочую папку и проверить. Успех — job.out; нет — job.skip с причиной."""
+def prepare_one(job, mode, cancel=None, gentle=False, threads=1, on_part=lambda f: None, taken=None, lock=None):
+    """Сжать один файл в рабочую папку и проверить. Успех — job.out (и job.target у MOV); нет — job.skip."""
     os.makedirs(WORK, exist_ok=True)
-    dst = _work_name(job.path)
+    target = ""
+    taken = taken if taken is not None else set()
+    lock = lock or threading.Lock()
+    if job.is_video and os.path.splitext(job.path)[1].lower() in MOV_EXT:
+        with lock:                        # два «IMG_1.mov» и «IMG_1.qt» не получат одно имя
+            target = target_for(job.path, ".mp4", taken)
+            taken.add(os.path.normcase(target))
+    dst = _work_name(job.path, name=os.path.basename(target) if target else None)
     try:
         st = os.stat(job.path)
         if st.st_size != job.size or st.st_mtime != job.mtime:
@@ -623,7 +659,7 @@ def prepare_one(job, mode, cancel=None, gentle=False, threads=1, on_part=lambda 
         new_size = os.path.getsize(dst)
         if new_size > job.size * (1 - MIN_GAIN[mode]):
             raise Skip("почти не уменьшился")
-        job.out, job.new_size = dst, new_size
+        job.out, job.new_size, job.target = dst, new_size, target
     except Cancelled:
         _drop(dst)
         raise
@@ -636,6 +672,9 @@ def prepare_one(job, mode, cancel=None, gentle=False, threads=1, on_part=lambda 
     except Exception as e:                                # чужой файл не должен ронять всю подготовку
         _drop(dst)
         job.skip = f"{type(e).__name__}: {e}"
+    if job.skip and target:
+        with lock:
+            taken.discard(os.path.normcase(target))
     return job
 
 
@@ -702,15 +741,26 @@ def prepare(root, kinds, mode, progress=None, cancel=None, load="normal", on_job
     on_job(job) — сразу, как файл готов (сжат или пропущен).
     Фото идут первыми (они быстрые), видео — от больших к маленьким.
     """
+    kinds = set(kinds) & MODE_KINDS[mode]
+    clean_work()
+    taken, lock = set(), threading.Lock()
+
+    def one(job, cancel, gentle, threads, on_part):
+        prepare_one(job, mode, cancel, gentle, threads, on_part, taken, lock)
+    return run_jobs(root, wanted_ext(kinds), one, WORK, progress, cancel, load, on_job)
+
+
+def run_jobs(root, exts, one, work, progress=None, cancel=None, load="normal", on_job=None):
+    """Обойти root (папка или список перетащенного) и сделать one(job, cancel, gentle, threads, on_part)
+    с каждым файлом нужного типа. Общая часть «Сжатия» и «Конвертации»; work — их рабочая папка
+    (по месту на её диске подготовка останавливается сама).
+    """
     progress = progress or (lambda *a: None)
     gentle, photo_workers, enc_threads = LOAD[load]
     if gentle:
         dupcore.background_mode()
     res = PrepResult()
-    kinds = set(kinds) & MODE_KINDS[mode]
-    clean_work()
     try:
-        exts = wanted_ext(kinds)
         cloud = []
         if isinstance(root, (list, tuple)):
             files, res.unsupported = gather(root, exts, cancel, res.errors, cloud,
@@ -736,7 +786,7 @@ def prepare(root, kinds, mode, progress=None, cancel=None, load="normal", on_job
                 on_job(job)
 
         def room(job):
-            free = free_space(os.path.dirname(WORK) if os.path.isdir(os.path.dirname(WORK)) else WORK)
+            free = free_space(os.path.dirname(work) if os.path.isdir(os.path.dirname(work)) else work)
             return free is None or free > RESERVE + job.size
 
         photos = [j for j in jobs if not j.is_video]
@@ -748,7 +798,7 @@ def prepare(root, kinds, mode, progress=None, cancel=None, load="normal", on_job
             if not room(job):
                 res.no_space = True
                 raise Cancelled
-            prepare_one(job, mode, cancel, gentle, 1 if photo_workers > 1 else 2)
+            one(job, cancel, gentle, 1 if photo_workers > 1 else 2, lambda f: None)
             finished(job)
 
         if photo_workers > 1:
@@ -776,7 +826,7 @@ def prepare(root, kinds, mode, progress=None, cancel=None, load="normal", on_job
             def part(f, base=base, job=job):
                 progress(base + int(job.size * f), total, state["files"], len(jobs), os.path.basename(job.path))
             part(0)
-            prepare_one(job, mode, cancel, gentle, enc_threads, part)
+            one(job, cancel, gentle, enc_threads, part)
             finished(job)
     except Cancelled:
         res.cancelled = True
@@ -821,6 +871,11 @@ def _blake(path):
     return h.digest()
 
 
+def _final(j):
+    """Куда встанет новый файл: Job.target или на место оригинала (у «Метаданных» — всегда на место)."""
+    return getattr(j, "target", "") or j.path
+
+
 def check_before_replace(jobs):
     """Что можно заменять прямо сейчас: оригинал не менялся, сжатая копия на месте. (можно, проблемы)."""
     ok, problems = [], []
@@ -834,6 +889,9 @@ def check_before_replace(jobs):
             problems.append((j.path, "файл изменился после подготовки"))
         elif not j.out or not os.path.exists(j.out) or os.path.getsize(j.out) != j.new_size:
             problems.append((j.path, "готовая копия пропала — подготовь заново"))
+        elif _final(j) != j.path and os.path.lexists(_final(j)):
+            problems.append((j.path, tr("файл {name} уже есть рядом — подготовь заново",
+                                        name=os.path.basename(_final(j)))))
         else:
             ok.append(j)
     return ok, problems
@@ -843,19 +901,28 @@ def replace(jobs, hwnd=None, progress=None, recycle=None, batch=None):
     """Заменить оригиналы сжатыми копиями. Возвращает (заменённые, проблемы [(путь, причина)]).
 
     Для каждого файла: копия кладётся рядом под временным именем и сверяется по содержимому →
-    оригинал уходит в Корзину → копия получает имя оригинала и его даты. Не ушёл оригинал
+    оригинал уходит в Корзину → копия получает имя оригинала (или новое — j.target) и его даты. Не ушёл оригинал
     в Корзину — временный файл удаляется, оригинал остаётся как был. В Корзину — пачками:
     одна операция на много файлов в разы быстрее.
     """
     recycle = recycle or (lambda paths: dupcore.to_recycle_bin(paths, hwnd=hwnd))
     ok, problems = check_before_replace(jobs)
     done = []
+    finals = set()                                     # новые имена, уже занятые этой заменой
     batch = batch or min(50, dupcore.step_for(len(ok)))
     for i in range(0, len(ok), batch):
         if progress:
             progress(i)
         staged = []                                    # (задание, временный файл, даты оригинала)
         for j in ok[i:i + batch]:
+            final = os.path.normcase(os.path.abspath(_final(j)))
+            if _final(j) != j.path and (final in finals or os.path.lexists(_final(j))):
+                # Два файла с одним новым именем или имя заняли после подготовки: оригинал не трогаем —
+                # иначе он ушёл бы в Корзину, а новый файл не встал бы на место.
+                problems.append((j.path, tr("файл {name} уже есть рядом — подготовь заново",
+                                            name=os.path.basename(_final(j)))))
+                continue
+            finals.add(final)
             folder, name = os.path.split(os.path.abspath(j.path))
             tmp = os.path.join(folder, f"~{name}.duplio")
             try:
@@ -878,13 +945,13 @@ def replace(jobs, hwnd=None, progress=None, recycle=None, batch=None):
                 problems.append((j.path, "оригинал не удалось убрать в Корзину — оставлен как был"))
                 continue
             try:
-                os.rename(tmp, j.path)
+                os.rename(tmp, _final(j))            # на Windows не перезаписывает: имя заняли — ошибка
             except OSError as e:
                 problems.append((j.path, tr("оригинал в Корзине, а новый файл остался под именем {name}: {err}",
                                             name=os.path.basename(tmp), err=e.strerror or e)))
                 continue
             try:
-                set_times(j.path, getattr(st, "st_birthtime_ns", st.st_ctime_ns), st.st_atime_ns, st.st_mtime_ns)
+                set_times(_final(j), getattr(st, "st_birthtime_ns", st.st_ctime_ns), st.st_atime_ns, st.st_mtime_ns)
             except OSError as e:
                 problems.append((j.path, tr("заменён, но даты не перенеслись: {err}", err=e.strerror or e)))
             _drop(j.out)

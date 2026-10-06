@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabe
                                QVBoxLayout, QWidget)
 
 import compcore
+import convcore
 import dupcore
 import i18n
 import logs
@@ -191,6 +192,7 @@ class MainWindow(QMainWindow):
     def __init__(self, cfg):
         super().__init__()
         from compress_page import CompressPage      # после выбора языка: тексты вкладок берутся при создании
+        from convert_page import ConvertPage
         from dups_page import DupsPage
         from meta_page import MetaPage
         from settings_page import SettingsPage
@@ -218,10 +220,12 @@ class MainWindow(QMainWindow):
         self.tabs = Tabs(self._brand())
         self.dups = DupsPage(cfg, self.thumbs, self.colors)
         self.compress = CompressPage(cfg, self.colors)
+        self.convert = ConvertPage(cfg, self.colors)
         self.meta = MetaPage(cfg, self.colors)
         self.settings = SettingsPage(cfg)
         self.tabs.addTab(self.dups, tr("Дубликаты"))
         self.tabs.addTab(self.compress, tr("Сжатие"))
+        self.tabs.addTab(self.convert, tr("Конвертация"))
         self.tabs.addTab(self.meta, tr("Метаданные"))
         self.tabs.addTab(self.settings, tr("Настройки"))
         col.addWidget(self.tabs, 1)
@@ -242,6 +246,11 @@ class MainWindow(QMainWindow):
         self.compress.go_settings.connect(lambda: self.tabs.setCurrentWidget(self.settings))
         self.compress.settings_changed.connect(lambda: settings.save(self.cfg))
         self.compress.finished.connect(self._compress_finished)
+        self.settings.load_changed.connect(self.convert.set_load_text)
+        self.convert.title_changed.connect(self._title)
+        self.convert.go_settings.connect(lambda: self.tabs.setCurrentWidget(self.settings))
+        self.convert.settings_changed.connect(lambda: settings.save(self.cfg))
+        self.convert.finished.connect(self._convert_finished)
         self.settings.load_changed.connect(self.meta.set_load_text)
         self.meta.title_changed.connect(self._title)
         self.meta.go_settings.connect(lambda: self.tabs.setCurrentWidget(self.settings))
@@ -357,10 +366,12 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         self.act_stop = menu.addAction(tr("Остановить поиск"), self.dups.stop_scan)
         self.act_stop_compress = menu.addAction(tr("Остановить сжатие"), self.compress.stop)
+        self.act_stop_convert = menu.addAction(tr("Остановить конвертацию"), self.convert.stop)
         self.act_stop_meta = menu.addAction(tr("Остановить работу с метаданными"), self.meta.stop)
         menu.addAction(tr("Выход"), self.quit_app)
         menu.aboutToShow.connect(lambda: (self.act_stop.setVisible(self.dups.busy),
                                           self.act_stop_compress.setVisible(self.compress.busy),
+                                          self.act_stop_convert.setVisible(self.convert.busy),
                                           self.act_stop_meta.setVisible(self.meta.busy)))
         self.tray_menu = menu
         self.tray.setContextMenu(menu)
@@ -399,6 +410,12 @@ class MainWindow(QMainWindow):
             text = tr("Сжимать нечего: файлы уже сжаты хорошо.")
         self.tray.showMessage(tr("Сжатие подготовлено"), text, self.icon, 8000)
 
+    def _convert_finished(self, ready, _size):
+        if self.isVisible() and not self.isMinimized():
+            return
+        text = tr("Новые файлы готовы: {n}.", n=i18n.num(ready)) if ready else tr("Конвертировать нечего.")
+        self.tray.showMessage(tr("Конвертация подготовлена"), text, self.icon, 8000)
+
     def busy_note(self):
         """Что пропадёт при выходе: (текст для окна крестика, вопрос, кнопка «не закрывать») или None."""
         if self.dups.busy:
@@ -408,6 +425,11 @@ class MainWindow(QMainWindow):
             return (tr("Сейчас идёт сжатие — если закрыть программу, оно остановится, а готовые копии пропадут."),
                     tr("Идёт сжатие. Закрыть программу и остановить его? Готовые копии пропадут."),
                     tr("Продолжить сжатие"))
+        if self.convert.busy:
+            return (tr("Сейчас идёт конвертация — если закрыть программу, она остановится, а готовые файлы "
+                       "пропадут."),
+                    tr("Идёт конвертация. Закрыть программу и остановить её? Готовые файлы пропадут."),
+                    tr("Продолжить конвертацию"))
         if self.meta.busy:
             return (tr("Сейчас идёт работа с метаданными — если закрыть программу, она остановится. "
                        "Уже готовые файлы останутся готовыми."),
@@ -416,6 +438,10 @@ class MainWindow(QMainWindow):
         if self.compress.has_pending():
             return (tr("Сжатые копии ещё не заменили оригиналы — при закрытии они пропадут."),
                     tr("Сжатые копии ещё не заменили оригиналы. Закрыть программу? Они пропадут."),
+                    tr("Не закрывать"))
+        if self.convert.has_pending():
+            return (tr("Новые файлы ещё не заменили оригиналы — при закрытии они пропадут."),
+                    tr("Новые файлы ещё не заменили оригиналы. Закрыть программу? Они пропадут."),
                     tr("Не закрывать"))
         return None
 
@@ -467,10 +493,12 @@ class MainWindow(QMainWindow):
             return
         if self.dups.cancel:
             self.dups.cancel.set()
-        if self.compress.cancel:
-            self.compress.cancel.set()
+        for page in (self.compress, self.convert):
+            if page.cancel:
+                page.cancel.set()
         self.meta.finish_before_exit()          # замену, начатую на «Метаданных», не обрываем на середине
         compcore.clean_work()                   # сжатые копии, которые не заменили оригиналы, больше не нужны
+        convcore.clean_work()
         metacore.clean_work()
         settings.save(self.cfg)
         log.info("Выход")
@@ -490,9 +518,10 @@ class MainWindow(QMainWindow):
         if self.dups.groups:
             self.dups.clear_cards()
             self.dups.refresh()
-        if self.compress.ready:
-            self.compress.refresh()
-        self.compress.update()
+        for page in (self.compress, self.convert):
+            if page.ready:
+                page.refresh()
+            page.update()
         if self.meta.items:
             self.meta.refresh()
         self.meta.update()
@@ -517,7 +546,7 @@ class MainWindow(QMainWindow):
                 os.path.splitext(p)[1].lower() in media for p in files) else self.dups
         if cur.busy:
             what = tr("поиск") if cur is self.dups else tr("сжатие") if cur is self.compress else \
-                tr("работа с метаданными")
+                tr("конвертация") if cur is self.convert else tr("работа с метаданными")
             return None, tr("Сейчас идёт {what} — дождись конца или останови его.", what=what), ""
         if cur is self.dups:
             folder = dirs[0] if dirs else os.path.dirname(files[0])
@@ -535,16 +564,28 @@ class MainWindow(QMainWindow):
                 parts.append(f"{i18n.num(len(files))} {i18n.plural(len(files), 'файл|файла|файлов', 'file|files')}")
             return (cur, tr("Отпусти — проверю только {what}", what=tr(" и ").join(parts)),
                     tr("Остальные файлы в папках не трону. Проверю по кнопке."))
+        if cur is self.convert:
+            if len(dirs) == 1 and not files:
+                return (cur, tr("Отпусти — подставлю папку «{name}» в «Конвертацию»",
+                                name=os.path.basename(dirs[0]) or dirs[0]),
+                        tr("Новые файлы начну готовить по кнопке."))
+            return (cur, tr("Отпусти — переведу в MP4 только {what}", what=tr(" и ").join(self._drop_parts(dirs, files))),
+                    tr("Остальные файлы в папках не трону. Новые файлы начну готовить по кнопке."))
         if len(dirs) == 1 and not files:
             return (cur, tr("Отпусти — подставлю папку «{name}» в «Сжатие»", name=os.path.basename(dirs[0]) or dirs[0]),
                     tr("Сжатые копии начну готовить по кнопке."))
+        return (cur, tr("Отпусти — сожму только {what}", what=tr(" и ").join(self._drop_parts(dirs, files))),
+                tr("Остальные файлы в папках не трону. Сжатые копии начну готовить по кнопке."))
+
+    @staticmethod
+    def _drop_parts(dirs, files):
+        """«2 папки», «3 файла» — что именно возьмёт вкладка из перетащенного."""
         parts = []
         if dirs:
             parts.append(f"{i18n.num(len(dirs))} {i18n.plural(len(dirs), 'папку|папки|папок', 'folder|folders')}")
         if files:
             parts.append(f"{i18n.num(len(files))} {i18n.plural(len(files), 'файл|файла|файлов', 'file|files')}")
-        return (cur, tr("Отпусти — сожму только {what}", what=tr(" и ").join(parts)),
-                tr("Остальные файлы в папках не трону. Сжатые копии начну готовить по кнопке."))
+        return parts
 
     def _show_drop_hint(self, title, sub=""):
         self.drop_hint_text = title               # без разметки — для журнала и тестов
@@ -666,6 +707,7 @@ def main():
     log.info("Язык %s, тема %s, нагрузка %s", i18n.LANG, cfg.get("theme"), cfg.get("load"))
     updater.cleanup()                                 # установщик прошлого обновления больше не нужен
     compcore.clean_work()                             # сжатые копии от прошлого запуска (если он упал)
+    convcore.clean_work()
     win = MainWindow(cfg)
     win.server = listen(win)
     win.show()

@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QPu
                                QVBoxLayout, QWidget)
 
 import compcore
+import convcore
 import i18n
 import logs
 import settings
@@ -178,10 +179,11 @@ class SettingsPage(QScrollArea):
         open_logs.clicked.connect(self.open_logs_requested.emit)
         logs_row.addWidget(open_logs)
         il.addLayout(logs_row)
-        il.addWidget(U.label(tr("Кэша на диске нет: превью живут только в памяти, пока открыто окно. Пока готовится "
-                                "сжатие, сжатые копии лежат в {work} — папка очищается при каждой новой подготовке "
-                                "и при выходе. Удалённые копии и заменённые оригиналы лежат в Корзине, пока ты её "
-                                "не очистишь.", work=compcore.WORK), "muted", wrap=True))
+        il.addWidget(U.label(tr("Кэша на диске нет: превью живут только в памяти, пока открыто окно. Пока готовятся "
+                                "сжатые копии и новые файлы, они лежат в {work} и {convert} — папки очищаются при "
+                                "каждой новой подготовке и при выходе. Удалённые копии и заменённые оригиналы лежат "
+                                "в Корзине, пока ты её не очистишь.", work=compcore.WORK, convert=convcore.WORK),
+                             "muted", wrap=True))
         root.addWidget(info)
         root.addStretch()
         self._lang_at_start = cfg.get("lang", "auto")

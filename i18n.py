@@ -229,8 +229,8 @@ EN = {
     "Выбери папку и режим и нажми «Подготовить сжатые копии».":
         "Choose a folder and a mode, then press “Prepare compressed copies”.",
     "Фото: JPEG и PNG. Видео — только «без видимых потерь».": "Photos: JPEG and PNG. Videos — only “visually lossless”.",
-    "Фото: JPEG и PNG; видео — в формат AV1 (MP4, MKV, WebM).":
-        "Photos: JPEG and PNG; videos — to AV1 (MP4, MKV, WebM).",
+    "Фото: JPEG и PNG; видео — в формат AV1 (MP4, MKV, WebM; MOV станет MP4).":
+        "Photos: JPEG and PNG; videos — to AV1 (MP4, MKV, WebM; MOV becomes MP4).",
     "Фото: JPEG и PNG.": "Photos: JPEG and PNG.",
     "AV1 Windows 11 показывает сразу, Windows 10 — после бесплатного расширения «AV1 Video Extension» из "
     "Microsoft Store.":
@@ -285,7 +285,6 @@ EN = {
         "pixels match byte for byte — the image is exactly the same",
     "SSIM {v}: на глаз разницы нет": "SSIM {v}: no visible difference",
     "VMAF {v}": "VMAF {v}",
-    "MOV в AV1 не сохраняется — такие ролики пока не сжимаю": "AV1 can't be saved in MOV — such videos aren't compressed yet",
     "VMAF {v}: на глаз разницы нет": "VMAF {v}: no visible difference",
     "Загружаю…": "Loading…",
     "Отметить все": "Mark all",
@@ -323,8 +322,8 @@ EN = {
     "Следующий →": "Next →",
     "{i} из {n}": "{i} of {n}",
     "Было {old} → стало {new}, меньше на {pct}": "Before {old} → after {new}, {pct} smaller",
-    "Показан один кадр из видео. Посмотреть целиком — «Открыть сжатый».":
-        "One frame of the video is shown. To watch all of it, use “Open compressed”.",
+    "Показан один кадр из видео. Посмотреть целиком — «{button}».":
+        "One frame of the video is shown. To watch all of it, use “{button}”.",
     # ---- что сделано и почему не сжат (compcore)
     "перепаковка": "repacked",
     "перепаковка (progressive)": "repacked (progressive)",
@@ -448,12 +447,13 @@ EN = {
         "Activity log — what the app did and which errors happened. It helps to figure out what went wrong; "
         "it is never sent anywhere. Its size is capped at 3 MB, older entries are replaced by newer ones.",
     "Открыть папку журнала": "Open log folder",
-    "Кэша на диске нет: превью живут только в памяти, пока открыто окно. Пока готовится сжатие, сжатые копии "
-    "лежат в {work} — папка очищается при каждой новой подготовке и при выходе. Удалённые копии и заменённые "
-    "оригиналы лежат в Корзине, пока ты её не очистишь.":
-        "There is no cache on disk: previews live only in memory while the window is open. While compression is "
-        "being prepared, compressed copies sit in {work} — the folder is emptied on every new preparation and "
-        "on exit. Deleted copies and replaced originals stay in the Recycle Bin until you empty it.",
+    "Кэша на диске нет: превью живут только в памяти, пока открыто окно. Пока готовятся сжатые копии и новые "
+    "файлы, они лежат в {work} и {convert} — папки очищаются при каждой новой подготовке и при выходе. Удалённые "
+    "копии и заменённые оригиналы лежат в Корзине, пока ты её не очистишь.":
+        "There is no cache on disk: previews live only in memory while the window is open. While compressed "
+        "copies and new files are being prepared, they sit in {work} and {convert} — the folders are emptied on "
+        "every new preparation and on exit. Deleted copies and replaced originals stay in the Recycle Bin until "
+        "you empty it.",
     "Что-то пошло не так: {err}\n\nПодробности записаны в журнал. Программа продолжит работать.":
         "Something went wrong: {err}\n\nThe details are in the activity log. The app keeps running.",
     "Открыть журнал": "Open log",
@@ -705,4 +705,61 @@ EN = {
     "испорченный блок Photoshop": "damaged Photoshop block",
     "необычный IPTC": "unusual IPTC",
     "испорченный JPEG: нет конца картинки": "damaged JPEG: no end of image",
+    "файл {name} уже есть рядом — подготовь заново": "{name} already exists next to it — prepare again",
+    "в видео нет заголовка moov": "the video has no moov header",
+    "заголовок moov не в конце файла — метаданные не перенести": "the moov header isn't at the end of the file — metadata can't be carried over",
+    "видео в формате {codec} — без пересжатия в MP4 не переложить": "{codec} video — can't go into MP4 without re-encoding",
+    "звук в формате {codec} — без пересжатия в MP4 не переложить": "{codec} audio — can't go into MP4 without re-encoding",
+    "без пересжатия": "without re-encoding",
+    "служебных дорожек не перенесено: {n} (MP4 их не хранит)": "service tracks not carried over: {n} (MP4 doesn't keep them)",
+    "после перекладки дорожки не сходятся с оригиналом": "after rewrapping, the tracks don't match the original",
+    "после перекладки не сходится длина ролика": "after rewrapping, the video length doesn't match",
+    "после перекладки не сходится тайм-код": "after rewrapping, the timecode doesn't match",
+    "после перекладки ролик повернулся бы иначе": "after rewrapping, the video would be rotated differently",
+    "после перекладки пропал бы Dolby Vision": "after rewrapping, Dolby Vision would be lost",
+    "не перенеслись метаданные: {keys}": "metadata not carried over: {keys}",
+    "после перекладки кадры сдвинулись по времени": "after rewrapping, frames moved in time",
+    "после перекладки видео или звук не совпали с оригиналом байт в байт": "after rewrapping, video or sound didn't match the original byte for byte",
+    "видео «живого фото» — после конвертации оно отвяжется от своего снимка": "Live Photo video — after conversion it would come apart from its photo",
+    "Конвертация": "Convert",
+    "Остановить конвертацию": "Stop converting",
+    "Конвертировать нечего.": "Nothing to convert.",
+    "Новые файлы готовы: {n}.": "New files ready: {n}.",
+    "Конвертация подготовлена": "Conversion prepared",
+    "Сейчас идёт конвертация — если закрыть программу, она остановится, а готовые файлы пропадут.": "Converting now — if you close the app, it will stop and the files already made will be lost.",
+    "Идёт конвертация. Закрыть программу и остановить её? Готовые файлы пропадут.": "Converting. Close the app and stop it? The files already made will be lost.",
+    "Продолжить конвертацию": "Keep converting",
+    "Новые файлы ещё не заменили оригиналы — при закрытии они пропадут.": "The new files haven't replaced the originals yet — they'll be lost if you close.",
+    "Новые файлы ещё не заменили оригиналы. Закрыть программу? Они пропадут.": "The new files haven't replaced the originals yet. Close the app? They'll be lost.",
+    "конвертация": "converting",
+    "Отпусти — подставлю папку «{name}» в «Конвертацию»": "Drop to put the folder “{name}” into Convert",
+    "Новые файлы начну готовить по кнопке.": "I'll start making the new files when you press the button.",
+    "Отпусти — переведу в MP4 только {what}": "Drop to convert only {what} to MP4",
+    "Остальные файлы в папках не трону. Новые файлы начну готовить по кнопке.": "Other files in the folders stay untouched. I'll start making the new files when you press the button.",
+    "Заменить {n} {files}": "Replace {n} {files}",
+    "Заменить {n} {files} новыми? Оригиналы уйдут в Корзину — вернуть можно оттуда.\n\nНовые файлы встанут рядом: имя то же, расширение другое (.mp4), даты файлов — прежние.": "Replace {n} {files} with the new ones? The originals go to the Recycle Bin — you can restore them from there.\n\nThe new files appear in the same place: same name, different extension (.mp4), same file dates.",
+    "Заменено файлов: {n}. Оригиналы — в Корзине.": "Files replaced: {n}. The originals are in the Recycle Bin.",
+    "Конвертация в другой формат": "Convert to another format",
+    "Подготовить MP4": "Prepare MP4",
+    "Выбери папку и нажми «Подготовить MP4».": "Choose a folder and press “Prepare MP4”.",
+    "Здесь появятся новые файлы: было → станет.\n\nСначала программа готовит и проверяет их в своей папке — оригиналы не трогает, пока ты не нажмёшь «Заменить».": "New files will appear here: before → after.\n\nFirst the app makes and checks them in its own folder — the originals stay untouched until you press “Replace”.",
+    "Готовлю… Новые файлы появятся здесь сразу, по одному.": "Preparing… New files will appear here one by one.",
+    "Готовлю MP4 · {done} из {total}": "Preparing MP4 · {done} of {total}",
+    "{app} — конвертация, {pct}%": "{app} — converting, {pct}%",
+    "Готово за {t}. Конвертировать нечего.": "Done in {t}. Nothing to convert.",
+    "Ни один файл не удалось переложить в MP4 — причины по кнопке «Не конвертированы».": "No file could be moved into MP4 — see why under “Not converted”.",
+    "Видео MOV в папке нет.": "No MOV videos in the folder.",
+    " Перетащенных файлов другого типа: {n} — их программа пока не конвертирует.": " Dropped files of another type: {n} — the app doesn't convert those yet.",
+    "Не конвертированы: {n}": "Not converted: {n}",
+    "Как": "How",
+    "Станет": "Becomes",
+    "Отметка — оригинал уйдёт в Корзину, рядом встанет новый файл": "Checked — the original goes to the Recycle Bin, the new file takes its place",
+    "Выбери файл в списке — здесь будут кадр оригинала и нового файла рядом. Двойной щелчок или пробел — сравнить крупно, с увеличением.": "Pick a file in the list — a frame of the original and of the new file will appear here side by side. Double-click or Space — compare up close, zoomed in.",
+    "Открыть новый": "Open new",
+    "Все отмеченные файлы заменены новыми.": "All checked files have been replaced with new ones.",
+    "Что": "What",
+    "Видео MOV (iPhone, фотоаппараты) → MP4 без пересжатия: картинка и звук — те же байт в байт, дата съёмки, геометка и камера переносятся, даты файла остаются прежними. Имя то же, расширение — .mp4.": "MOV videos (iPhone, cameras) → MP4 without re-encoding: picture and sound stay the same byte for byte, the recording date, location and camera are carried over, the file dates stay the same. Same name, extension .mp4.",
+    "видео и звук — те же байт в байт, метаданные перенесены": "video and sound are the same byte for byte, metadata carried over",
+    "\n\nУ роликов MOV ({n}) расширение станет .mp4: формат AV1 в MOV не записывается.": "\n\nMOV videos ({n}) will get the .mp4 extension: AV1 can't be written into MOV.",
+    "после сжатия не перенеслись метаданные": "after compression, the metadata wasn't carried over",
 }
