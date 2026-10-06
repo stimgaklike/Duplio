@@ -10,14 +10,14 @@ jobs:
   tests:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: python -m pip install --upgrade pip pyside6 pillow numpy
 
       - name: Программы для сжатия (кэш)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: third_party/_downloads
           key: tools-${{ hashFiles('tools/fetch_tools.py') }}

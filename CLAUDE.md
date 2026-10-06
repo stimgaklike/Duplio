@@ -14,7 +14,7 @@ https://github.com/stimgaklike/Duplio. План — `ROADMAP.md`, история
 | `compcore.py` | сжатие без окна: `prepare` (сжатые копии в `%LOCALAPPDATA%\Duplio\work`, фото в несколько потоков, видео по одному), `prepare_one`, `same_pixels` (байт в байт, 16 бит не округляются, альфа без предумножения), `ssim` (блоки 8×8, среднее и худший 1 %), `with_meta` (служебные блоки JPEG оригинала байт в байт), `replace` (копия рядом → сверка → оригинал в Корзину пачками → имя и даты), `set_times` |
 | `compress_page.py` | вкладка «Сжатие»: режим, подготовка в потоке → `Bridge`, список «было → стало», превью (`Previews`: фото — QImageReader, видео — кадр ffmpeg в один момент у обоих), `CompareDialog`/`PairView` (100–400 %, обе половины вместе, за край не утащить), замена |
 | `settings_page.py` | «Настройки» |
-| `third_party\` (не в git) | jpegtran, oxipng, ffmpeg — `python tools/fetch_tools.py` (версии и SHA-256 закреплены); в сборку кладёт `prune_build.py` |
+| `third_party\` (не в git) | jpegtran, oxipng, ffmpeg — `python tools/fetch_tools.py` (версии и SHA-256 закреплены; качает из своего релиза `deps`, потом у авторов); в сборку кладёт `prune_build.py`. Новая версия программы: файл — в релиз `deps` (`gh release upload deps …`), размер и SHA-256 — в `fetch_tools.py` |
 | `thumbs.py` | превью: фото — QImageReader в QThreadPool; видео — кадр через QMediaPlayer+QVideoSink (без ffmpeg) |
 | `updater.py` | GitHub Releases API → `Update`; скачивание с проверкой размера и SHA-256 (`digest` из API); тихая установка |
 | `i18n.py` | `tr("русский шаблон {x}", x=…)`; английский — словарь `EN`; `plural`, `num`, `decimal` |

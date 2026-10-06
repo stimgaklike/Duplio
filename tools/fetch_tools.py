@@ -39,20 +39,37 @@ TOOLS = [
 ]
 
 
+# Свой релиз «deps» с теми же файлами — первым: сборки FFmpeg на исходном сервере живут около месяца.
+# Не скачалось оттуда — берём у авторов; в любом случае размер и SHA-256 сверяются.
+MIRROR = f"{GH}/stimgaklike/Duplio/releases/download/deps"
+
+
+def urls(t):
+    return [f"{MIRROR}/{t['url'].rsplit('/', 1)[1]}", t["url"]]
+
+
 def _download(t):
     os.makedirs(CACHE, exist_ok=True)
     path = os.path.join(CACHE, t["url"].rsplit("/", 1)[1])
-    if not (os.path.exists(path) and os.path.getsize(path) == t["size"] and _sha(path) == t["sha256"]):
-        print(f"  скачиваю {t['url']} ({t['size'] / 1e6:.1f} МБ)")
-        tmp = path + ".part"
-        with urllib.request.urlopen(t["url"], timeout=60) as r, open(tmp, "wb") as f:
-            shutil.copyfileobj(r, f, 1 << 20)
+    if os.path.exists(path) and os.path.getsize(path) == t["size"] and _sha(path) == t["sha256"]:
+        return path
+    tmp = path + ".part"
+    for url in urls(t):
+        print(f"  скачиваю {url} ({t['size'] / 1e6:.1f} МБ)")
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r, open(tmp, "wb") as f:
+                shutil.copyfileobj(r, f, 1 << 20)
+        except OSError as e:                      # нет сети, 404 — пробуем следующий адрес
+            print(f"  не скачалось: {e}")
+            continue
         size, sha = os.path.getsize(tmp), _sha(tmp)
-        if size != t["size"] or sha != t["sha256"]:
-            os.remove(tmp)
-            sys.exit(f"  НЕ СОВПАЛО: {t['name']}: размер {size}, sha256 {sha}")
-        os.replace(tmp, path)
-    return path
+        if size == t["size"] and sha == t["sha256"]:
+            os.replace(tmp, path)
+            return path
+        print(f"  НЕ СОВПАЛО: размер {size}, sha256 {sha} — файл отброшен")
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    sys.exit(f"  {t['name']}: ни один адрес не дал нужный файл")
 
 
 def _sha(path):
