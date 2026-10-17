@@ -569,7 +569,7 @@ class MainWindow(QMainWindow):
                 return (cur, tr("Отпусти — подставлю папку «{name}» в «Конвертацию»",
                                 name=os.path.basename(dirs[0]) or dirs[0]),
                         tr("Новые файлы начну готовить по кнопке."))
-            return (cur, tr("Отпусти — переведу в MP4 только {what}", what=tr(" и ").join(self._drop_parts(dirs, files))),
+            return (cur, tr("Отпусти — конвертирую только {what}", what=tr(" и ").join(self._drop_parts(dirs, files))),
                     tr("Остальные файлы в папках не трону. Новые файлы начну готовить по кнопке."))
         if len(dirs) == 1 and not files:
             return (cur, tr("Отпусти — подставлю папку «{name}» в «Сжатие»", name=os.path.basename(dirs[0]) or dirs[0]),

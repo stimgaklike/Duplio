@@ -25,6 +25,7 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import app  # noqa: E402
+import e2e_isolate  # noqa: E402,F401  — рабочие папки всех вкладок временные
 import dupcore  # noqa: E402
 import dups_page  # noqa: E402
 import ui_util  # noqa: E402

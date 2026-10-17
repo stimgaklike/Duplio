@@ -161,6 +161,9 @@ class Job:
     skip: str = ""            # почему не сжали
     target: str = ""          # новое имя после замены (конвертация: .MOV → .MP4); "" — имя прежнее
     note: str = ""            # что не перенеслось (служебные дорожки и т. п.)
+    detail: str = ""          # подробнее, чем how (под превью): чем кодировалось, что со звуком
+    warn: bool = False        # стоит обратить внимание (уже пересжимали, кадр уменьшен, стал больше) — жёлтым
+    resized: bool = False     # кадр уменьшен — оригинал в полном размере стоит сохранить
 
     @property
     def kind(self):
@@ -396,6 +399,33 @@ _STD_LUMA = [16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14,
              49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99]
 
 
+_STD_CHROMA = [17, 18, 24, 47, 99, 99, 99, 99, 18, 21, 26, 66, 99, 99, 99, 99, 24, 26, 56, 99, 99, 99, 99, 99,
+               47, 66, 99, 99, 99, 99, 99, 99] + [99] * 32
+# Качество не выше этого у стандартной таблицы — снимок уже пересохраняла программа (Duplio сам пишет 85 и 90).
+SOFTWARE_MAX_Q = 90
+
+
+def _ijg(table, q):
+    s = 5000 // q if q < 50 else 200 - 2 * q
+    return [min(255, max(1, (v * s + 50) // 100)) for v in table]
+
+
+def software_quality(im):
+    """Качество, если таблицы сжатия JPEG — стандартные из libjpeg (так сохраняют программы: Pillow, редакторы,
+    мессенджеры и сам Duplio), иначе None (камеры телефонов пишут свои таблицы: у владельца — 102 из 102
+    снимков Samsung). Без памяти о сжатых файлах: почерк программы виден в самом файле."""
+    try:
+        tables = [list(im.quantization[i]) for i in sorted(im.quantization)[:2]]
+    except (AttributeError, KeyError, TypeError):
+        return None
+    if not tables or any(len(t) != 64 for t in tables):
+        return None
+    for q in range(1, 101):                     # Pillow отдаёт таблицы в обычном порядке (проверено поломкой)
+        if tables == [_ijg(_STD_LUMA, q), _ijg(_STD_CHROMA, q)][:len(tables)]:
+            return q
+    return None
+
+
 def jpeg_quality(im):
     """Примерное качество, с которым снят JPEG (по таблице яркости), или None."""
     try:
@@ -447,6 +477,12 @@ def _jpeg_visual(job, dst):
         if im.mode not in ("RGB", "L"):                 # CMYK и прочее — редкость, а цвета легко исказить
             raise Skip("необычный JPEG — не трогаю")
         src_q = jpeg_quality(im)
+        soft_q = software_quality(im)
+        if soft_q is not None and soft_q <= SOFTWARE_MAX_Q and any(q < soft_q for q in PHOTO_QUALITIES):
+            # Без этого снимок, сжатый до 90 (или пересохранённый мессенджером), сжимался бы ещё раз до 85 —
+            # а проверка сравнивала бы с уже сжатым, и потери двух проходов складывались бы.
+            raise Skip(tr("снимок уже пересохраняла программа (качество {q}) — повторное сжатие добавит потери",
+                          q=soft_q))
         sampling = JpegImagePlugin.get_sampling(im)
         im.load()
         ref = __import__("numpy").asarray(im.convert("L"), dtype="float32")
@@ -511,7 +547,7 @@ def _video(job, dst, cancel, gentle, threads, on_part):
     four_k = int(v.get("width") or 0) * int(v.get("height") or 0) >= 0.9 * 3840 * 2160
     steps = len(VIDEO_CRFS)
     for step, crf in enumerate(VIDEO_CRFS):
-        args = [tool("ffmpeg"), "-hide_banner", "-nostdin", "-y", "-i", job.path,
+        args = [tool("ffmpeg"), "-hide_banner", "-nostdin", "-y", *hwdec(), "-i", job.path,
                 "-map", "0:V:0", "-map", "0:a?", "-map_metadata", "0", "-map_chapters", "0",
                 "-c:v", "libsvtav1", "-crf", str(crf), "-preset", str(VIDEO_PRESET),
                 "-svtav1-params", f"lp={threads}",
@@ -584,8 +620,33 @@ def same_timing(a, b, tolerance=0.002):
     return all(abs((x - a0) - (y - b0)) <= tolerance for x, y in zip(ta, tb))
 
 
-def video_vmaf(orig, new, four_k=False, cancel=None, gentle=False, threads=4):
+_hwdec = []
+
+
+def hwdec():
+    """["-hwaccel", "cuda"], если есть видеокарта NVIDIA (проверка — раз за запуск), иначе [].
+
+    Распаковку 4K HEVC делает процессор, и это узкое место: на ночном ролике Galaxy 24 с кодирование шло 26,7 с,
+    сравнение VMAF — 28,9 с; с распаковкой на видеокарте — 6,0 и 8,6 с, VMAF тот же до знака (95,312345).
+    Кодек, который видеокарта не распакует, ffmpeg распакует процессором сам.
+    """
+    if not _hwdec:
+        try:
+            r = subprocess.run([tool("ffmpeg"), "-v", "error", "-init_hw_device", "cuda=cu", "-f", "lavfi", "-i",
+                                "nullsrc=size=64x64:duration=0.04", "-f", "null", "-"], capture_output=True, timeout=30,
+                               creationflags=CREATE_NO_WINDOW, env=_env())
+            _hwdec.append(["-hwaccel", "cuda"] if r.returncode == 0 else [])
+        except (OSError, subprocess.TimeoutExpired):
+            _hwdec.append([])
+    return list(_hwdec[0])
+
+
+def video_vmaf(orig, new, four_k=False, cancel=None, gentle=False, threads=4, ref_filter="", by_order=False):
     """VMAF сжатого видео против оригинала по каждому VIDEO_VMAF_SUBSAMPLE-му кадру: (среднее, худший 1 %).
+
+    ref_filter — то же, что сделали с картинкой при кодировании (уменьшение, деинтерлейс), чтобы сравнивать
+    только потери сжатия. by_order — пары кадров по порядку, а не по времени: в MKV/WebM время округлено до
+    миллисекунды, и при переменной частоте кадров пары по времени съезжают на соседний кадр (худший 1 % — 17).
 
     Журнал libvmaf пишет по ANSI-имени (кириллица превращается в «РґРµРЅСЊ»), поэтому имя — латиницей,
     а папка задаётся рабочей (cwd).
@@ -593,9 +654,10 @@ def video_vmaf(orig, new, four_k=False, cancel=None, gentle=False, threads=4):
     folder = os.path.dirname(os.path.abspath(new))
     log = f"vmaf_{os.getpid()}_{threading.get_ident()}.json"
     model = "vmaf_4k_v0.6.1" if four_k else "vmaf_v0.6.1"
+    pts = "settb=1,setpts=N" if by_order else "setpts=PTS-STARTPTS"     # единица времени одна у обоих
     try:
-        _run([tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", new, "-i", orig, "-lavfi",
-              "[0:V:0]setpts=PTS-STARTPTS[d];[1:V:0]setpts=PTS-STARTPTS[r];"
+        _run([tool("ffmpeg"), "-hide_banner", "-nostdin", *hwdec(), "-i", new, *hwdec(), "-i", orig, "-lavfi",
+              f"[0:V:0]{pts}[d];[1:V:0]{ref_filter + ',' if ref_filter else ''}{pts}[r];"
               f"[d][r]libvmaf=model=version={model}:n_threads={threads}:n_subsample={VIDEO_VMAF_SUBSAMPLE}:"
               f"log_fmt=json:log_path={log}", "-f", "null", "-"], cancel, gentle, cwd=folder)
         with open(os.path.join(folder, log), encoding="utf-8") as f:
@@ -897,8 +959,11 @@ def check_before_replace(jobs):
     return ok, problems
 
 
-def replace(jobs, hwnd=None, progress=None, recycle=None, batch=None):
+def replace(jobs, hwnd=None, progress=None, recycle=None, batch=None, keep=False):
     """Заменить оригиналы сжатыми копиями. Возвращает (заменённые, проблемы [(путь, причина)]).
+
+    keep — оригинал остаётся на месте, новый файл просто встаёт рядом под своим именем (j.target):
+    «Конвертация» с результатом «рядом» (например, звук из видео).
 
     Для каждого файла: копия кладётся рядом под временным именем и сверяется по содержимому →
     оригинал уходит в Корзину → копия получает имя оригинала (или новое — j.target) и его даты. Не ушёл оригинал
@@ -906,7 +971,12 @@ def replace(jobs, hwnd=None, progress=None, recycle=None, batch=None):
     одна операция на много файлов в разы быстрее.
     """
     recycle = recycle or (lambda paths: dupcore.to_recycle_bin(paths, hwnd=hwnd))
+    if keep:
+        recycle = lambda paths: (paths, [])          # «рядом»: оригинал никуда не уходит
     ok, problems = check_before_replace(jobs)
+    if keep:                                           # рядом — значит, под другим именем; иначе это замена
+        problems += [(j.path, "новый файл встал бы на место оригинала") for j in ok if _final(j) == j.path]
+        ok = [j for j in ok if _final(j) != j.path]
     done = []
     finals = set()                                     # новые имена, уже занятые этой заменой
     batch = batch or min(50, dupcore.step_for(len(ok)))

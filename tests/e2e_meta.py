@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 qapp = QApplication(sys.argv)
 
 import app  # noqa: E402
+import e2e_isolate  # noqa: E402,F401  — рабочие папки всех вкладок временные
 import dupcore  # noqa: E402
 import metacore  # noqa: E402
 import ui_util  # noqa: E402

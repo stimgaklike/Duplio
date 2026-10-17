@@ -243,6 +243,49 @@ class VisualPhoto(Base):
         self.assertEqual(C.prepare_one(self.job(src), "visual").skip,
                          "уже сжат сильно — дальше будут видны потери")
 
+    def test_jpeg_saved_by_a_program_is_not_compressed_twice(self):
+        # Duplio сам пишет 85 или 90; снимок, сжатый до 90, иначе сжимался бы второй раз до 85
+        src = self.p("once.jpg")
+        photo(noise=6).save(src, "JPEG", quality=90, optimize=True, progressive=True)
+        with Image.open(src) as im:
+            self.assertEqual(C.software_quality(im), 90)
+        job = C.prepare_one(self.job(src), "visual")
+        self.assertEqual(job.skip, "снимок уже пересохраняла программа (качество 90) — повторное сжатие добавит потери")
+        self.assertNotIn("пересохраняла", C.prepare_one(self.job(src), "lossless").skip)   # без потерь — можно
+
+    def test_camera_tables_are_not_taken_for_a_program(self):
+        src = save_jpeg(photo(), self.p("camera.jpg"), quality=95)
+        with open(src, "rb") as f:
+            data = bytearray(f.read())
+        at = data.find(b"\xff\xdb") + 5                   # первое значение таблицы — как у камеры, не по стандарту
+        data[at] = data[at] + 1
+        with open(src, "wb") as f:
+            f.write(data)
+        with Image.open(src) as im:
+            self.assertIsNone(C.software_quality(im))
+        # таблица яркости стандартная, а цвета — своя: тоже камера
+        src2 = save_jpeg(photo(), self.p("camera2.jpg"), quality=95)
+        with open(src2, "rb") as f:
+            data = bytearray(f.read())
+        with Image.open(src2) as im:
+            luma = list(im.quantization[0])
+        i, found = 0, None
+        while found is None:                                   # таблица цвета (номер 1) в блоках DQT
+            i = data.index(b"\xff\xdb", i) + 4
+            end = i - 2 + int.from_bytes(data[i - 2:i], "big")
+            while i < end:
+                if data[i] & 0x0F == 1:
+                    found = i + 1
+                i += 65
+        data[found] = data[found] + 1
+        with open(src2, "wb") as f:
+            f.write(data)
+        with Image.open(src2) as im:
+            self.assertEqual(list(im.quantization[0]), luma)
+            self.assertIsNone(C.software_quality(im))
+        with Image.open(save_jpeg(photo(), self.p("std.jpg"), quality=95)) as im:
+            self.assertEqual(C.software_quality(im), 95)
+
     def test_quality_estimate(self):
         for q in (40, 60, 75, 85, 92):
             photo(400, 300).save(self.p(f"q{q}.jpg"), quality=q)

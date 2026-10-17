@@ -28,6 +28,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton  # no
 qapp = QApplication(sys.argv)
 
 import app  # noqa: E402
+import e2e_isolate  # noqa: E402,F401  — рабочие папки всех вкладок временные
 import compress_page  # noqa: E402
 import convcore  # noqa: E402
 import dupcore  # noqa: E402
@@ -162,11 +163,15 @@ pump(0.6)
 # ---------- начальное состояние
 tabs = [w.tabs.tabText(i) for i in range(w.tabs.count())]
 check(tabs == ["Дубликаты", "Сжатие", "Конвертация", "Метаданные", "Настройки"], f"вкладки: {tabs}")
-check(c.btn_start.text() == "Подготовить MP4" and c.btn_replace.text() == "Заменить оригиналы"
+check(c.btn_start.text() == "Подготовить файлы" and c.btn_replace.text() == "Заменить оригиналы"
       and not c.btn_replace.isEnabled(), "кнопки до подготовки")
 check(c.stack.currentIndex() == 0 and "было → станет" in c.empty.text(), "до подготовки — заглушка")
-check(c.what.isVisible() and "без пересжатия" in c.what.text() and not c.hint.isVisible(), "что делает вкладка")
-check(not hasattr(c, "chips") and c.mode_btns == {}, "режимов и типов у «Конвертации» нет")
+check(c.preset() == "keep" and c.preset_btns["keep"].isChecked() and "без пересжатия" in c.preset_text.text()
+      and not c.custom.isVisible() and not c.hint.isVisible(), "по умолчанию — «Как есть», под ним пояснение")
+check(not c.keep_box.isChecked() and "в Корзину" in c.keep_box.toolTip(), "по умолчанию оригинал заменяется")
+check(not hasattr(c, "chips") and c.mode_btns == {}, "режимов и типов «Сжатия» у «Конвертации» нет")
+check([tr_btn.text() for tr_btn in c.preset_btns.values()] ==
+      ["Как есть", "Откроется везде", "Меньше места", "Для Apple", "Только звук", "Свой"], "наборы")
 shot("qt_convert_start.png")
 
 # ---------- подготовка
@@ -188,7 +193,7 @@ cols = [it.text(i) for i in range(1, 7)]
 check(cols[0] == "IMG_0001.MOV" and cols[1] == "IMG_0001.MP4" and cols[4] == "без пересжатия"
       and cols[5] == "iPhone", f"строка списка: {cols}")
 header = [c.tree.headerItem().text(i) for i in range(c.tree.columnCount())]
-check(header == ["Заменить", "Файл", "Станет", "Было", "Стало", "Как", "Где лежит"], f"столбцы: {header}")
+check(header == ["Взять", "Файл", "Станет", "Было", "Стало", "Как", "Где лежит"], f"столбцы: {header}")
 check(c.btn_replace.text() == "Заменить 2 файла" and c.btn_replace.isEnabled(),
       f"на кнопке без «освободится»: «{c.btn_replace.text()}»")
 check("освободится" not in c.status.text() and c.step_text.text().startswith("Готово за"), c.step_text.text())
@@ -248,7 +253,7 @@ answers.clear()
 c.replace_marked()
 pump(0.5)
 ask = next((a[1] for a in answers if a[0] == "yesno"), "")
-check("(.mp4)" in ask and "Корзину" in ask, "подтверждение: " + ask[:70])
+check("расширение — .mp4" in ask and "Корзину" in ask, "подтверждение: " + ask[:70])
 check(all(not os.path.exists(x) for x in targets) and all(os.path.exists(t) for t in targets.values()),
       "оригиналы ушли, рядом — MP4")
 check(sorted(os.listdir(trash)) == ["IMG_0001.MOV", "прогулка.mov"], f"в «Корзине»: {sorted(os.listdir(trash))}")
@@ -256,9 +261,17 @@ check(all(os.stat(t).st_mtime_ns == st0[x].st_mtime_ns and os.stat(t).st_birthti
           for x, t in targets.items()), "даты файлов прежние")
 check(os.path.getsize(p(r"Камера\прогулка.mp4")) == 0, "чужой «прогулка.mp4» не тронут")
 check(any(a[0] == "info" and a[1].startswith("Заменено файлов: 2.") for a in answers), "итог замены показан")
-check(c.tree.topLevelItemCount() == 0 and c.empty.text() == "Все отмеченные файлы заменены новыми.",
+check(c.tree.topLevelItemCount() == 0 and c.empty.text() == "Все отмеченные файлы готовы.",
       "список пуст: " + c.empty.text())
 check(not [x for x in os.listdir(p("iPhone")) if x.startswith("~")], "временных файлов рядом не осталось")
+# Кадр уменьшен (4K → 1080p), а оригиналы уходят в Корзину — окно замены предупреждает отдельно.
+import compcore  # noqa: E402
+fake = compcore.Job(mov1, 1, 0, target=mov1[:-4] + ".mp4", resized=True)
+c.prepared = (c.target(), False)
+check("⚠ У 1 ролика кадр уменьшен" in c.ask_text([fake]) and "«Оставить оригиналы»" in c.ask_text([fake]),
+      "при уменьшенном кадре окно замены предупреждает: " + c.ask_text([fake])[-90:])
+c.prepared = (c.target(), True)
+check("⚠" not in c.ask_text([fake]), "при «Оставить оригиналы» предупреждать не о чем")
 
 # ---------- перетаскивание
 def drag(paths):
@@ -275,7 +288,7 @@ def drag(paths):
 
 w.tabs.setCurrentWidget(c)
 said = drag([live, mjpeg])
-check(said == "Отпусти — переведу в MP4 только 2 файла" and c.drop_files == [live, mjpeg]
+check(said == "Отпусти — конвертирую только 2 файла" and c.drop_files == [live, mjpeg]
       and c.files_note.text() == "Перетащено: 2 файла", f"файлы на «Конвертацию»: {said!r}")
 said = drag([p("Камера")])
 check(said == "Отпусти — подставлю папку «Камера» в «Конвертацию»" and c.folder.text() == p("Камера")
@@ -286,7 +299,62 @@ drag([live])
 c.busy = False
 check(any(a[0] == "warn" and "идёт конвертация" in a[1] for a in answers), "во время конвертации бросок не принят")
 
-# ---------- окно минимального размера
+# ---------- «Только звук»: сам предлагает «рядом», оригиналы остаются
+c.folder.setText(p("iPhone"))
+c.preset_btns["audio"].click()
+pump(0.2)
+check(c.keep_box.isChecked() and c.cfg["convert_preset"] == "audio" and c.cfg["convert_beside"],
+      "«Только звук» сам поставил «Оставить оригиналы» и запомнил")
+c.start()
+wait(lambda: not c.busy, 60)
+pump(0.5)
+names = sorted(os.path.basename(j.target) for j in c.ready)
+check(names == ["IMG_0001.MP3"], f"звук из MP4 готов, «живое фото» не тронуто: {names}")
+check(c.btn_replace.text() == "Положить рядом 1 файл", "кнопка: " + c.btn_replace.text())
+before = sorted(os.listdir(p("iPhone")))
+answers.clear()
+c.replace_marked()
+pump(0.5)
+after = sorted(os.listdir(p("iPhone")))
+check(set(before) <= set(after) and len(after) == len(before) + len(names),
+      f"видео на месте, звук — рядом ({before} → {after})")
+check(any(a[0] == "yesno" and "Оригиналы останутся на месте" in a[1] for a in answers), "вопрос — про «рядом»")
+check(os.listdir(trash) == sorted(os.listdir(trash)) and len(os.listdir(trash)) == 2, "в «Корзину» ничего не ушло")
+
+# ---------- «Свой»: пересжатие, списки под формат, подсказка «подготовь заново»
+c.preset_btns["custom"].click()
+c.keep_box.setChecked(False)
+pump(0.2)
+check(c.custom.isVisible() and not c.preset_text.isVisible(), "у «Своего» — списки вместо пояснения")
+box = c.combos["container"]
+box.setCurrentIndex(box.findData("webm"))
+pump(0.1)
+vid = c.combos["video"]
+enabled = [vid.itemData(i) for i in range(vid.count()) if vid.model().item(i).isEnabled()]
+check(enabled == ["copy", "av1", "vp9"] and vid.currentData() in ("copy", "vp9"), f"WebM — только VP9 и AV1: {enabled}")
+check(c.combos["audio"].currentData() in ("auto", "opus"), "звук в WebM — Opus или как есть")
+box.setCurrentIndex(box.findData("mp4"))
+vid.setCurrentIndex(vid.findData("av1"))
+c.combos["device"].setCurrentIndex(c.combos["device"].findData("cpu"))
+c.combos["size"].setCurrentIndex(c.combos["size"].findData(480))
+pump(0.1)
+check(c.target() == __import__("convcore").Target("mp4", "av1", "auto", 480, 0, "auto", "cpu"),
+      f"«Свой» собран из списков: {c.target()}")
+check(c.cfg["convert_custom"]["video"] == "av1", "и запомнен в настройках")
+c.folder.setText(p("Камера"))
+c.start()
+wait(lambda: not c.busy, 120)
+pump(0.5)
+j = next((x for x in c.ready), None)
+check(j is not None and j.how.startswith("AV1 · CRF ") and j.check == "vmaf", f"пересжато: {j and j.how}")
+c.combos["quality"].setCurrentIndex(c.combos["quality"].findData("small"))
+pump(0.1)
+check(c.hint.isVisible() and "Настройки изменились" in c.hint.text(), "после смены настроек — «подготовь заново»")
+c.combos["quality"].setCurrentIndex(c.combos["quality"].findData("auto"))
+pump(0.1)
+check(not c.hint.isVisible(), "вернул как было — подсказка ушла")
+
+# ---------- окно минимального размера (со «Своим» — карточка самая высокая)
 w.resize(w.minimumWidth(), w.minimumHeight())
 iphone_mov(p(r"iPhone\IMG_0005.MOV"))                              # чтобы в списке была строка
 c.folder.setText(root)
@@ -306,7 +374,13 @@ for name, wd in (("Подготовить", c.btn_start), ("Остановить
 check(c.minimumSizeHint().height() <= c.height(),
       f"вкладке хватает высоты: минимум {c.minimumSizeHint().height()} при {c.height()}")
 check(not layout_problems(), f"в окне минимального размера ничего не обрезано: {layout_problems()}")
-check(c.tree.height() >= 150, f"список не ниже 150 px ({c.tree.height()})")
+narrow = [(k, b.width(), b.sizeHint().width()) for k, b in c.combos.items() if b.width() < b.sizeHint().width()]
+check(not narrow, f"выпадающие списки не обрезаны: {narrow}")
+check(c.tree.height() >= 110, f"список при открытом «Своём» не ниже 110 px ({c.tree.height()})")
+shot("qt_convert_min_custom.png")
+c.preset_btns["keep"].click()
+pump(0.4)
+check(c.tree.height() >= 150, f"с набором список не ниже 150 px ({c.tree.height()})")
 shot("qt_convert_min.png")
 
 check(not slot_errors, f"ошибок в обработчиках нет ({len(slot_errors)})")

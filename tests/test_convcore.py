@@ -15,6 +15,8 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from dataclasses import replace  # noqa: E402
+
 import compcore as C  # noqa: E402
 import convcore as V  # noqa: E402
 
@@ -107,8 +109,8 @@ class Base(unittest.TestCase):
         st = os.stat(path)
         return C.Job(path, st.st_size, st.st_mtime)
 
-    def convert(self, path):
-        return V.convert_one(self.job(path))
+    def convert(self, path, target=None, **kw):
+        return V.convert_one(self.job(path), target, **kw)
 
 
 class Remux(Base):
@@ -174,7 +176,7 @@ class Remux(Base):
         finally:
             C.probe = probe
         self.assertEqual(job.skip, "")
-        self.assertEqual(job.note, "служебных дорожек не перенесено: 1 (MP4 их не хранит)")
+        self.assertEqual(job.note, "служебных дорожек не перенесено: 1 (в MP4 их не положить)")
 
     def test_live_photo_video_is_left_alone(self):
         src = iphone_mov(self.p("IMG_0002.MOV"), keys=APPLE + [(V.LIVE_KEY, "8D5F0A3B-1C2D-4E5F-9A8B-7C6D5E4F3A2B")])
@@ -183,12 +185,25 @@ class Remux(Base):
         self.assertEqual(job.out, "")
         self.assertEqual(os.listdir(self.work), [])
 
-    def test_codecs_mp4_cannot_take_as_is_are_left_for_now(self):
+    def test_video_mp4_cannot_take_as_is_asks_for_a_codec(self):
         mj = self.convert(iphone_mov(self.p("mj.mov"), video=("-c:v", "mjpeg")))
-        self.assertEqual(mj.skip, "видео в формате mjpeg — без пересжатия в MP4 не переложить")
-        pcm = self.convert(iphone_mov(self.p("pcm.mov"), audio=("-c:a", "pcm_s16le")))
-        self.assertEqual(pcm.skip, "звук в формате pcm_s16le — без пересжатия в MP4 не переложить")
+        self.assertEqual(mj.skip, "видео в формате mjpeg — без пересжатия в MP4 не переложить: выбери кодек")
         self.assertEqual(os.listdir(self.work), [])
+
+    def test_sound_mp4_cannot_take_becomes_aac_video_stays_byte_for_byte(self):
+        src = iphone_mov(self.p("pcm.mov"), audio=("-c:a", "pcm_s16le"))     # так пишут фотоаппараты
+        job = self.convert(src)
+        self.assertEqual(job.skip, "")
+        self.assertEqual((job.how, job.detail, job.check), ("звук → AAC", "видео без пересжатия, звук → AAC", ""))
+        info = C.probe(job.out)
+        self.assertEqual([s["codec_name"] for s in info["streams"]], ["h264", "aac"])
+        self.assertEqual(V.stream_hashes(src, [0]), V.stream_hashes(job.out, [0]))
+        self.assertEqual(tags(job.out), tags(src))
+
+    def test_already_in_that_form_is_left_alone(self):
+        src = self.p("clip.mp4")
+        ff("-i", iphone_mov(self.p("a.mov")), "-map", "0", "-c", "copy", src)
+        self.assertEqual(self.convert(src).skip, "уже MP4 в нужном виде")
 
 
 class Checks(Base):
@@ -202,7 +217,8 @@ class Checks(Base):
         self.dur = float(self.info["format"]["duration"])
 
     def check(self, dst):
-        V._check_remux(self.src, self.info, self.keep, dst, self.dur, None, False)
+        t = V.Target()
+        V._check(C.Job(self.src, 0, 0), self.info, V.plan(self.info, ".mov", t), t, dst, None, False)
 
     def remux(self, *args, carry=True):
         dst = self.p("out.mp4")
@@ -221,7 +237,7 @@ class Checks(Base):
     def test_extra_metadata_is_caught(self):
         dst = self.remux("-c", "copy", "-metadata", "comment=added", "-movflags", "+use_metadata_tags", carry=False)
         with self.assertRaisesRegex(C.Skip, "не перенеслись метаданные"):
-            V._check_remux(self.src, self.info, self.keep, dst, self.dur, None, False)
+            self.check(dst)
 
     def test_reencoded_sound_is_caught(self):
         with self.assertRaisesRegex(C.Skip, "не совпали с оригиналом байт в байт"):
@@ -309,6 +325,256 @@ class Replace(Base):
         self.assertEqual(os.listdir(self.bin), [])
         with open(job.target, "rb") as f:
             self.assertEqual(f.read(), b"someone else's file")
+
+
+def old_avi(path, seconds=2, size="640x480", extra=()):
+    """Старое видео: MPEG-4 Part 2 и звук PCM в AVI, 25 кадров/с — MP4 их «как есть» не берёт (MPEG-4 берёт,
+    но так снимали камеры лет 15 назад; для теста важно, что пересжатие нужно)."""
+    ff("-f", "lavfi", "-i", f"testsrc2=size={size}:rate=25:duration={seconds}", "-f", "lavfi",
+       "-i", f"sine=frequency=440:duration={seconds}", "-c:v", "mpeg4", "-q:v", "3", "-c:a", "pcm_s16le",
+       *extra, path)
+    return path
+
+
+CPU = dict(device="cpu")            # в GitHub Actions видеокарты нет — тесты лестницы идут на процессоре
+
+
+class Reencode(Base):
+    def test_old_avi_everywhere_h264_aac_checked_by_vmaf(self):
+        job = self.convert(old_avi(self.p("old.avi")), V.Target("mp4", "h264", audio="aac", **CPU))
+        self.assertEqual(job.skip, "")
+        self.assertEqual(os.path.basename(job.target), "old.mp4")
+        self.assertEqual(job.check, "vmaf")
+        self.assertGreaterEqual(job.score, C.VIDEO_VMAF_MEAN)
+        info = C.probe(job.out)
+        self.assertEqual([s["codec_name"] for s in info["streams"]], ["h264", "aac"])
+        self.assertRegex(job.how, r"^H\.264 · \d,\d Мбит/с$")
+        self.assertRegex(job.detail, r"^H\.264, процессор, \d,\d Мбит/с, звук → AAC$")
+
+    def test_each_cpu_codec_and_container(self):
+        src = old_avi(self.p("old.avi"), seconds=1, size="320x240")
+        for t, codecs, ext in ((V.Target("mp4", "av1", **CPU), ["av1", "aac"], "mp4"),
+                               (V.Target("mkv", "hevc", **CPU), ["hevc", "pcm_s16le"], "mkv"),
+                               (V.Target("webm", "vp9", **CPU), ["vp9", "opus"], "webm")):
+            job = self.convert(src, t)
+            self.assertEqual(job.skip, "", t)
+            self.assertEqual(([s["codec_name"] for s in C.probe(job.out)["streams"]], job.target[-len(ext):]),
+                             (codecs, ext))
+
+    def test_same_codec_is_copied_not_reencoded(self):
+        src = iphone_mov(self.p("IMG_0005.MOV"))                    # уже H.264
+        job = self.convert(src, V.Target("mp4", "h264", audio="aac", **CPU))
+        self.assertEqual((job.how, job.check), ("без пересжатия", "streams"))
+        self.assertEqual(V.stream_hashes(src), V.stream_hashes(job.out))
+
+    def test_smaller_frame_and_fewer_frames(self):
+        src = self.p("big.mp4")
+        ff("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=60:duration=2", "-c:v", "libopenh264", "-b:v", "8M", src)
+        job = self.convert(src, V.Target("mkv", "av1", size=480, fps=30, **CPU))
+        self.assertEqual(job.skip, "")
+        v = C._video_stream(C.probe(job.out))
+        self.assertEqual((int(v["width"]), int(v["height"])), (854, 480))
+        self.assertEqual(len(C.frame_times(job.out)), 60)                     # 2 с по 30 кадров
+        self.assertGreaterEqual(job.score, C.VIDEO_VMAF_MEAN)                  # сравнение — с уменьшенным оригиналом
+
+    def test_portrait_frame_is_shrunk_by_its_short_side(self):
+        src = self.p("tall.mp4")
+        ff("-f", "lavfi", "-i", "testsrc2=size=720x1280:rate=30:duration=1", "-c:v", "libopenh264", "-b:v", "6M", src)
+        job = self.convert(src, V.Target("mp4", "av1", "small", size=480, **CPU))
+        v = C._video_stream(C.probe(job.out))
+        self.assertEqual((int(v["width"]), int(v["height"])), (480, 854))
+
+    def test_interlaced_camera_video_is_deinterlaced(self):
+        src = self.p("00001.MTS")
+        ff("-f", "lavfi", "-i", "testsrc2=size=1440x1080:rate=25:duration=1", "-c:v", "mpeg2video", "-b:v", "15M",
+           "-flags", "+ilme+ildct", "-top", "1", "-f", "mpegts", src)
+        self.assertEqual(C._video_stream(C.probe(src))["field_order"], "tt")
+        job = self.convert(src, V.Target("mp4", "av1", "medium", **CPU))
+        self.assertEqual(job.skip, "")
+        self.assertEqual(C._video_stream(C.probe(job.out)).get("field_order", "progressive"), "progressive")
+
+    def test_hdr_to_h264_is_refused_hevc_keeps_hdr_colors(self):
+        src = self.p("hlg.mkv")
+        ff("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=1", "-c:v", "ffv1", "-pix_fmt", "yuv420p10le",
+           "-vf", "setparams=color_trc=arib-std-b67:color_primaries=bt2020:colorspace=bt2020nc", src)
+        self.assertEqual(C._video_stream(C.probe(src))["color_transfer"], "arib-std-b67")
+        self.assertEqual(self.convert(src, V.Target("mp4", "h264", **CPU)).skip,
+                         "HDR-видео в H.264 не перевести без потери цветов — выбери HEVC или AV1")
+        job = self.convert(src, V.Target("mkv", "av1", **CPU))
+        self.assertEqual(job.skip, "")
+        v = C._video_stream(C.probe(job.out))
+        self.assertEqual((v["color_transfer"], v["pix_fmt"]), ("arib-std-b67", "yuv420p10le"))
+
+    def test_video_already_reencoded_by_a_program_is_flagged(self):
+        src = old_avi(self.p("old.avi"), seconds=1, size="320x240")
+        first = self.convert(src, V.Target("mp4", "av1", "small", **CPU))      # ffmpeg пишет подпись Lavc
+        os.replace(first.out, self.p("once.mp4"))
+        again = self.convert(self.p("once.mp4"), V.Target("mp4", "h264", "high", **CPU))
+        self.assertTrue(again.warn)
+        notes = again.note.split("; ")                           # AV1 → H.264 высокого качества — и больше
+        self.assertEqual(len(notes), 2, notes)
+        self.assertEqual(notes[0], "уже пересжимался программой (libsvtav1) — каждое пересжатие чуть ухудшает качество")
+        self.assertRegex(notes[1], r"^файл стал больше оригинала на \d+%$")
+        cam = self.p("camera.mp4")                                               # подпись как у видеокамеры
+        ff("-i", src, "-c:v", "libopenh264", "-b:v", "4M", "-metadata:s:v:0", "encoder=AVC Coding", cam)
+        self.assertFalse(self.convert(cam, V.Target("mp4", "av1", "small", **CPU)).warn)
+        copied = self.convert(self.p("once.mp4"), V.Target("mkv", "copy"))       # без пересжатия — не потеря
+        self.assertEqual((copied.skip, copied.warn), ("", False))
+
+    def test_cpu_hevc_refuses_frames_not_divisible_by_8(self):
+        # kvazaar на таком кадре молча не выдаёт ни одного (у владельца — ролик WhatsApp 478×850)
+        src = self.p("wa.mp4")
+        ff("-f", "lavfi", "-i", "testsrc2=size=478x850:rate=30:duration=1", "-c:v", "libopenh264", "-b:v", "3M", src)
+        self.assertEqual(self.convert(src, V.Target("mkv", "hevc", **CPU)).skip,
+                         "HEVC на процессоре не кодирует кадр 478×850 (стороны должны делиться на 8) — выбери другой "
+                         "кодек или видеокарту")
+        ok = self.convert(src, V.Target("mkv", "hevc", "small", size=360, **CPU))      # уменьшенный — 360×640
+        self.assertEqual(ok.skip, "")
+        v = C._video_stream(C.probe(ok.out))
+        self.assertEqual((int(v["width"]), int(v["height"])), (360, 640))
+        self.assertEqual(V._out_size({"width": 1920, "height": 1080}, V.Target(size=720)), (1280, 720))
+
+    def test_less_space_never_makes_a_file_bigger(self):
+        # телефон 720p уже сжат экономно — AV1 «без видимых потерь» вышел бы в 1,5 раза больше (прогон 17.10.2026)
+        src = self.p("low.mp4")
+        ff("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=2", "-c:v", "libopenh264", "-b:v", "120k", src)
+        job = self.convert(src, V.PRESETS["small"][2])
+        self.assertRegex(job.skip, r"^AV1 не уменьшает этот файл \(\d+% оригинала\) — оставлен как есть$")
+        self.assertEqual(os.listdir(self.work), [])
+        big = old_avi(self.p("old.avi"), seconds=1, size="320x240")             # а несжатое — уменьшает
+        self.assertEqual(self.convert(big, V.PRESETS["small"][2]).skip, "")
+
+    def test_everywhere_shrinks_big_frames_to_1080p_and_says_so(self):
+        src = self.p("big.mp4")
+        ff("-f", "lavfi", "-i", "testsrc2=size=2560x1440:rate=30:duration=1", "-c:v", "libopenh264", "-b:v", "20M", src)
+        job = self.convert(src, replace(V.PRESETS["everywhere"][2], device="cpu"))
+        self.assertEqual(job.skip, "")
+        v = C._video_stream(C.probe(job.out))
+        self.assertEqual((int(v["width"]), int(v["height"])), (1920, 1080))
+        self.assertTrue(job.warn and job.resized)
+        self.assertIn("кадр уменьшен: 2560×1440 → 1920×1080", job.note)
+        small = self.convert(old_avi(self.p("old.avi"), seconds=1), replace(V.PRESETS["everywhere"][2], device="cpu"))
+        self.assertEqual((small.skip, small.resized), ("", False))               # 640×480 не трогается
+
+    def test_for_apple_keeps_h264_and_hevc_as_they_are(self):
+        apple = replace(V.PRESETS["apple"][2], device="cpu")
+        mov = iphone_mov(self.p("IMG_0008.MOV"))                                 # H.264 в MOV
+        self.assertEqual(self.convert(mov, apple).skip, "уже MOV в нужном виде")
+        mp4 = self.p("clip.mp4")
+        ff("-i", mov, "-map", "0", "-c", "copy", mp4)
+        job = self.convert(mp4, apple)
+        self.assertEqual((job.skip, job.how, job.target[-4:]), ("", "без пересжатия", ".mov"))
+        avi = self.convert(old_avi(self.p("old.avi"), seconds=1), apple)          # MPEG-4 Part 2 — в HEVC
+        self.assertEqual((avi.skip, C._video_stream(C.probe(avi.out))["codec_name"]), ("", "hevc"))
+
+    def test_service_tracks_alone_are_no_reason_to_rewrite(self):
+        src = iphone_mov(self.p("faces2.mov"))
+        probe = C.probe
+
+        def with_mebx(path):
+            info = probe(path)
+            if path == src:
+                info["streams"].append({"index": 9, "codec_type": "data", "codec_tag_string": "mebx"})
+            return info
+        C.probe = with_mebx
+        try:
+            job = self.convert(src, replace(V.PRESETS["apple"][2], device="cpu"))
+        finally:
+            C.probe = probe
+        self.assertEqual(job.skip, "уже MOV в нужном виде")
+
+    def test_manual_quality_skips_the_ladder(self):
+        src = old_avi(self.p("old.avi"), seconds=1, size="320x240")
+        small = self.convert(src, V.Target("mp4", "av1", "small", **CPU))
+        high = self.convert(src, V.Target("mp4", "av1", "high", **CPU))
+        self.assertEqual((small.check, small.how, small.detail),
+                         ("", "AV1 · Маленький файл", "AV1, процессор, Маленький файл, звук → AAC"))
+        self.assertLess(small.new_size, high.new_size)
+
+    @unittest.skipUnless(V.gpu_ok("hevc_nvenc"), "нет видеокарты NVIDIA")
+    def test_video_card_is_used_when_there(self):
+        job = self.convert(old_avi(self.p("old.avi")), V.Target("mov", "hevc", audio="aac"))
+        self.assertEqual(job.skip, "")
+        self.assertRegex(job.how, r"^HEVC · CQ \d+$")
+        self.assertIn("HEVC (H.265), видеокарта, CQ ", job.detail)
+        v = C._video_stream(C.probe(job.out))
+        self.assertEqual((v["codec_tag_string"], job.target[-4:]), ("hvc1", ".mov"))
+
+    def test_without_video_card_falls_back_to_cpu(self):
+        saved = dict(V._gpu)
+        V._gpu.update({"h264_nvenc": False})
+        try:
+            self.assertEqual(V.encoder_for("h264", "gpu")[0], "libopenh264")
+            self.assertEqual(V.encoder_for("vp9", "gpu")[0], "libvpx-vp9")          # у VP9 видеокарты нет
+        finally:
+            V._gpu.clear()
+            V._gpu.update(saved)
+
+    @unittest.skipUnless(C.hwdec(), "нет видеокарты NVIDIA")
+    def test_video_card_decoding_does_not_change_the_score(self):
+        src = old_avi(self.p("old.avi"), seconds=1)
+        dst = self.p("enc.mp4")
+        ff("-i", src, "-map", "0:v", "-c:v", "libsvtav1", "-crf", "40", dst)
+        with_card = C.video_vmaf(src, dst, by_order=True)
+        saved, C._hwdec[:] = list(C._hwdec), [[]]
+        try:
+            on_cpu = C.video_vmaf(src, dst, by_order=True)
+        finally:
+            C._hwdec[:] = saved
+        # MPEG-4 Part 2 (AVI) распаковка не обязана совпадать бит в бит — 0,006 VMAF; у H.264/HEVC совпадает до знака
+        self.assertAlmostEqual(with_card[0], on_cpu[0], delta=0.05)
+
+    def test_vmaf_by_frame_order_with_different_time_bases(self):
+        # AVI считает время в 1/25 с, MP4 — в своих долях: пары по номеру кадра, а не по числу из файла
+        src = old_avi(self.p("old.avi"), seconds=1)
+        dst = self.p("same.mp4")
+        ff("-i", src, "-map", "0:v", "-c:v", "libsvtav1", "-crf", "10", dst)
+        mean, low = C.video_vmaf(src, dst, by_order=True)
+        self.assertGreater(low, 90)
+
+
+class Settings(Base):
+    def test_presets_are_valid_targets(self):
+        for key, (_name, _text, t) in V.PRESETS.items():
+            if t is not None:
+                self.assertEqual(V.Target.from_dict(t.as_dict()), t, key)
+
+    def test_choice_is_fitted_to_the_container(self):
+        t = V.Target.from_dict({"container": "webm", "video": "h264", "audio": "aac", "size": 1080, "fps": 7})
+        self.assertEqual((t.video, t.audio, t.size, t.fps), ("vp9", "opus", 1080, 0))
+        t = V.Target.from_dict({"container": "mp3", "audio": "none"})
+        self.assertEqual((t.audio_only, t.audio), (True, "mp3"))
+        self.assertEqual(V.Target.from_dict({"container": "avi", "device": "tpu"}), V.Target())
+        # «Меньше места» — на процессоре: AV1 там на треть меньше при том же VMAF (калибровка 17.10.2026)
+        self.assertEqual(V.PRESETS["small"][2].device, "cpu")
+
+
+class AudioOnly(Base):
+    def test_sound_from_video_beside_the_original(self):
+        src = iphone_mov(self.p("IMG_0006.MOV"))
+        job = self.convert(src, V.Target("mp3", audio="mp3"), beside=True)
+        self.assertEqual(job.skip, "")
+        info = C.probe(job.out)
+        self.assertEqual([s["codec_type"] + ":" + s["codec_name"] for s in info["streams"]], ["audio:mp3"])
+        self.assertEqual(os.path.basename(job.target), "IMG_0006.MP3")
+        self.assertAlmostEqual(float(info["format"]["duration"]), 2.0, delta=0.15)
+        to_bin = []                                   # Корзину звать нельзя: оригинал остаётся
+        done, problems = C.replace([job], keep=True, recycle=lambda paths: (to_bin.append(paths), (paths, []))[1])
+        self.assertEqual((len(done), problems, to_bin), (1, [], []))
+        self.assertEqual(sorted(os.listdir(self.root)), ["IMG_0006.MOV", "IMG_0006.MP3"])   # видео на месте
+
+    def test_same_extension_beside_gets_a_number(self):
+        src = old_avi(self.p("clip.avi"), seconds=1, size="320x240")
+        mp4 = self.convert(src, V.Target("mp4", "av1", "small", **CPU))
+        os.replace(mp4.out, self.p("clip.mp4"))
+        again = self.convert(self.p("clip.mp4"), V.Target("mp4", "h264", "medium", **CPU), beside=True)
+        self.assertEqual(os.path.basename(again.target), "clip (2).mp4")
+
+    def test_replace_beside_never_takes_the_original_place(self):
+        job = self.convert(iphone_mov(self.p("IMG_0007.MOV")))
+        job.target = ""
+        done, problems = C.replace([job], keep=True)
+        self.assertEqual((done, problems), ([], [(job.path, "новый файл встал бы на место оригинала")]))
 
 
 if __name__ == "__main__":

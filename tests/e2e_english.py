@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QComboBox, QLabel,
                                QTabBar, QTreeWidget, QWidget)
 
 import app  # noqa: E402
+import e2e_isolate  # noqa: E402,F401  — рабочие папки всех вкладок временные
 import dups_page  # noqa: E402
 import ui_util  # noqa: E402
 import updater  # noqa: E402

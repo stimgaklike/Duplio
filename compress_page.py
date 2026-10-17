@@ -551,6 +551,9 @@ class CompressPage(QWidget):
         self.hint = WrapLabel("", "warn")
         grid.addWidget(self.hint, 4, 1)
 
+    def _build_action_extra(self, act):
+        """Что поставить в строку кнопок слева от «Нагрузки» (у «Конвертации» — «Оставить оригиналы»)."""
+
     def _finish_build(self):
         mode = self.cfg.get("compress_mode", "lossless")
         self.mode_btns[mode if mode in MODE_TEXT else "lossless"].setChecked(True)
@@ -559,6 +562,7 @@ class CompressPage(QWidget):
     def _build_rest(self, root, card, cl):
         act = QHBoxLayout()
         act.setSpacing(8)
+        self._build_action_extra(act)
         self.load_text = U.label("", "muted")
         act.addWidget(self.load_text)
         change = QPushButton(tr("Изменить"), objectName="link")
@@ -1063,15 +1067,7 @@ class CompressPage(QWidget):
     def _update_summary(self):
         jobs = self._marked_jobs()
         n, saved = len(jobs), sum(j.saved for j in jobs)
-        if n and not self.SAVES:
-            self.btn_replace.setText(tr("Заменить {n} {files}", n=num(n),
-                                        files=plural(n, "файл|файла|файлов", "file|files")))
-        elif n:
-            self.btn_replace.setText(tr("Заменить {n} {files}  ·  освободится {size}", n=num(n),
-                                        files=plural(n, "файл|файла|файлов", "file|files"),
-                                        size=dupcore.human_size(saved)))
-        else:
-            self.btn_replace.setText(tr("Заменить оригиналы"))
+        self.btn_replace.setText(self.replace_label(n, saved))
         self.btn_replace.setEnabled(n > 0 and not self.busy)
         self.summary.setVisible(bool(self.ready))
         if not self.ready:
@@ -1082,6 +1078,22 @@ class CompressPage(QWidget):
         self.summary.setText(tr("Готово к замене: {ready}  ·  отмечено: {n}  ·  было {old} → станет {new}",
                                 ready=num(len(self.ready)), n=num(n), old=dupcore.human_size(old),
                                 new=dupcore.human_size(old - saved)) + more)
+
+    def replace_label(self, n, saved):
+        """Надпись на кнопке замены для n отмеченных файлов."""
+        if not n:
+            return tr("Заменить оригиналы")
+        files = plural(n, "файл|файла|файлов", "file|files")
+        if not self.SAVES:
+            return tr("Заменить {n} {files}", n=num(n), files=files)
+        return tr("Заменить {n} {files}  ·  освободится {size}", n=num(n), files=files, size=dupcore.human_size(saved))
+
+    def replacing_text(self, done, total):
+        return tr("Заменяю файлы: {done} из {total}", done=num(done), total=num(total))
+
+    def replace_args(self):
+        """Что ещё передать compcore.replace (у «Конвертации» — «положить рядом»)."""
+        return {}
 
     def _current_changed(self, cur, _prev):
         self.show_job(cur.data(1, FILE_ROLE) if cur is not None else None)
@@ -1185,7 +1197,7 @@ class CompressPage(QWidget):
     def _replace_with_progress(self, jobs):
         """Замена в фоне, с полосой прогресса: тысячи файлов не вешают окно."""
         from PySide6.QtWidgets import QApplication, QProgressDialog
-        dlg = QProgressDialog(tr("Заменяю файлы…"), None, 0, len(jobs), self)
+        dlg = QProgressDialog(self.replacing_text(0, len(jobs)), None, 0, len(jobs), self)
         dlg.setWindowTitle(U.APP_TITLE)
         dlg.setMinimumDuration(400)
         dlg.setWindowModality(Qt.WindowModal)
@@ -1193,13 +1205,14 @@ class CompressPage(QWidget):
         hwnd = int(self.window().winId())
 
         def work():
-            result["v"] = compcore.replace(jobs, hwnd=hwnd, progress=lambda n: result.__setitem__("n", n))
+            result["v"] = compcore.replace(jobs, hwnd=hwnd, progress=lambda n: result.__setitem__("n", n),
+                                          **self.replace_args())
         th = threading.Thread(target=work, daemon=True)
         th.start()
         while th.is_alive():
             n = result.get("n", 0)
             dlg.setValue(n)
-            dlg.setLabelText(tr("Заменяю файлы: {done} из {total}", done=num(n), total=num(len(jobs))))
+            dlg.setLabelText(self.replacing_text(n, len(jobs)))
             QApplication.processEvents()
             th.join(0.05)
         dlg.close()

@@ -45,6 +45,12 @@ def tables():
     out += list(meta_page.OUTPUTS.values()) + [n for _g, n in metacore.EXIF_TAGS.values()]
     out += [n for _g, n in metacore.IPTC.values() if n] + [n for _g, n in metacore.UDTA.values() if n]
     out += list(compcore.MODES.values()) + list(compcore.KINDS.values())
+    import convcore
+    out += [c[0] for c in convcore.CONTAINERS.values()] + [p[0] for p in convcore.PRESETS.values()]
+    out += [p[1] for p in convcore.PRESETS.values()]
+    for table in (convcore.VIDEO_CODECS, convcore.AUDIO_CODECS, convcore.QUALITIES, convcore.SIZES,
+                  convcore.FPSES, convcore.DEVICES):
+        out += list(table.values())
     return out
 
 
