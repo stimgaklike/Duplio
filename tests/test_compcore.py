@@ -121,9 +121,9 @@ class SamePixels(Base):
 
     def test_16_bit_difference_is_not_rounded_away(self):
         a = np.full((20, 20), 30000, np.uint16)
-        Image.fromarray(a, "I;16").save(self.p("a.png"))
+        Image.fromarray(a).save(self.p("a.png"))              # режим I;16 — по типу данных (в Pillow 13 явный не берёт)
         a[3, 3] = 30001                                       # в 8 битах это то же значение
-        Image.fromarray(a, "I;16").save(self.p("b.png"))
+        Image.fromarray(a).save(self.p("b.png"))
         self.assertFalse(C.same_pixels(self.p("a.png"), self.p("b.png")))
 
     def test_broken_file_is_never_the_same(self):
