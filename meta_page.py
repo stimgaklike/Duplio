@@ -590,10 +590,16 @@ class MetaPage(QWidget):
         self.busy = busy
         self.btn_start.setEnabled(not busy)
         self.btn_stop.setEnabled(busy)
+        U.why(self.btn_start, tr("Уже работаю — дождись конца или нажми «Остановить».") if busy else "")
+        U.why(self.btn_stop, "" if busy else tr("Сейчас ничего не идёт — останавливать нечего."))
+        later = tr("Это можно поменять, когда работа закончится.") if busy else ""
         for b in list(self.preset_btns.values()) + list(self.output_btns.values()) + list(self.checks.values()):
             b.setEnabled(not busy)
+            U.why(b, later)
         self.copies.setEnabled(not busy)
         self.copies_choose.setEnabled(not busy)
+        U.why(self.copies, later)
+        U.why(self.copies_choose, later)
         if not busy:
             self.ticker.stop()
         self._update_summary()
@@ -696,6 +702,14 @@ class MetaPage(QWidget):
                                 tr("Убрать из отмеченных файлов"))
         U.repolish(self.btn_go)
         self.btn_go.setEnabled(n > 0 and not self.busy)
+        if n and not self.busy:
+            U.why(self.btn_go, "")
+        elif self.busy:
+            U.why(self.btn_go, tr("Подожди: работа ещё идёт."))
+        elif not self.items:
+            U.why(self.btn_go, tr("Сначала нажми «Проверить файлы» — пока убирать нечего."))
+        else:
+            U.why(self.btn_go, tr("Отметь галочкой хотя бы один файл в списке."))
         self.summary.setVisible(bool(self.items))
         if self.items:
             self.summary.setText(tr("Прочитано: {seen}  ·  есть что убрать: {shown}  ·  отмечено: {n}",

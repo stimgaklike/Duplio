@@ -163,16 +163,53 @@ pump(0.6)
 # ---------- начальное состояние
 tabs = [w.tabs.tabText(i) for i in range(w.tabs.count())]
 check(tabs == ["Дубликаты", "Сжатие", "Конвертация", "Метаданные", "Настройки"], f"вкладки: {tabs}")
-check(c.btn_start.text() == "Подготовить файлы" and c.btn_replace.text() == "Заменить оригиналы"
-      and not c.btn_replace.isEnabled(), "кнопки до подготовки")
+check(c.btn_start.text() == "Посмотреть файлы" and c.btn_replace.text() == "Заменить оригиналы"
+      and not c.btn_replace.isEnabled(), "кнопки до подготовки: сначала — посмотреть файлы")
+from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtWidgets import QToolTip  # noqa: E402
+QTest.mouseClick(c.btn_replace, Qt.LeftButton)
+pump(0.3)
+check(QToolTip.isVisible() and QToolTip.text() == "Сначала нажми «Подготовить файлы» — пока делать нечего.",
+      f"щелчок по недоступной кнопке объясняет почему: {QToolTip.text()!r}")
+QToolTip.hideText()
 check(c.stack.currentIndex() == 0 and "было → станет" in c.empty.text(), "до подготовки — заглушка")
-check(c.preset() == "keep" and c.preset_btns["keep"].isChecked() and "без пересжатия" in c.preset_text.text()
-      and not c.custom.isVisible() and not c.hint.isVisible(), "по умолчанию — «Как есть», под ним пояснение")
+check(c.preset() == "groups" and "по группам" in c.preset_text.text() and not c.custom.isVisible()
+      and not c.hint.isVisible(), "по умолчанию — «Подобрать для каждого», под ним пояснение")
 check(not c.keep_box.isChecked() and "в Корзину" in c.keep_box.toolTip(), "по умолчанию оригинал заменяется")
 check(not hasattr(c, "chips") and c.mode_btns == {}, "режимов и типов «Сжатия» у «Конвертации» нет")
 check([tr_btn.text() for tr_btn in c.preset_btns.values()] ==
-      ["Как есть", "Откроется везде", "Меньше места", "Для Apple", "Только звук", "Свой"], "наборы")
+      ["Подобрать для каждого", "Как есть", "Откроется везде", "Меньше места", "Для Apple", "Только звук", "Свой"],
+      "наборы")
 shot("qt_convert_start.png")
+
+# ---------- «Подобрать для каждого»: выбрал папку — группы
+c.use_folder(root)
+wait(lambda: not c.surveying, 30)
+pump(0.4)
+kinds = {g.kind: sorted(os.path.basename(f.path) for f in g.files) for g in c.survey.groups}
+check(kinds == {"mov": ["IMG_0001.MOV", "прогулка.mov"], "old": ["MVI_0003.MOV"], "live": ["IMG_0002.MOV"]},
+      f"группы: {kinds}")
+check(c.stack.currentIndex() == 2 and c.cmp_title.text() == "Что будет" and c.btn_start.text() == "Подготовить файлы",
+      "видны группы, справа — «Что будет», кнопка — «Подготовить файлы»")
+check(not c.btn_replace.isVisible() and not c.btn_mark_all.isVisible(), "на шаге групп кнопок замены и отметок нет")
+check("ничего не случится, пока ты не нажмёшь кнопку внизу" in c.cmp_hint.text(), "справа обещание: пока не нажмёшь")
+live_box = c.group_boxes["live"][0]
+check(not live_box.isEnabled() and live_box.count() == 1, "у «живых фото» выбрать нельзя — только «Не трогать»")
+shot("qt_convert_groups.png")
+c.group_boxes["old"][0].setCurrentIndex(c.group_boxes["old"][0].findData("nothing"))
+pump(0.1)
+check("• Не трогать: 2 видео" in c.cmp_hint.text(), "сводка справа меняется вместе с выбором: " + c.cmp_hint.text()[:60])
+c.start()
+wait(lambda: not c.busy, 120)
+pump(0.5)
+done = sorted(os.path.basename(j.target) for j in c.ready)
+check(done == ["IMG_0001.MP4", "прогулка (2).mp4"] and c.stack.currentIndex() == 1 and c.btn_groups.isVisible(),
+      f"подготовлены только MOV, есть ссылка «Показать группы»: {done}")
+c.btn_groups.click()
+pump(0.2)
+check(c.stack.currentIndex() == 2, "«Показать группы» возвращает к группам")
+c.preset_btns["keep"].click()                    # дальше — набор «Как есть»
+pump(0.2)
 
 # ---------- подготовка
 c.folder.setText(root)
@@ -270,7 +307,7 @@ fake = compcore.Job(mov1, 1, 0, target=mov1[:-4] + ".mp4", resized=True)
 c.prepared = (c.target(), False)
 check("⚠ У 1 ролика кадр уменьшен" in c.ask_text([fake]) and "«Оставить оригиналы»" in c.ask_text([fake]),
       "при уменьшенном кадре окно замены предупреждает: " + c.ask_text([fake])[-90:])
-c.prepared = (c.target(), True)
+fake.keep = True                                   # «Оставить оригиналы» — у файла: ляжет рядом
 check("⚠" not in c.ask_text([fake]), "при «Оставить оригиналы» предупреждать не о чем")
 
 # ---------- перетаскивание

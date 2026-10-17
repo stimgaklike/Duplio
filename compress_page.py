@@ -581,6 +581,7 @@ class CompressPage(QWidget):
         prog = QVBoxLayout()
         prog.setSpacing(6)
         top = QHBoxLayout()
+        self.step_row = top                      # «Конвертация» ставит сюда ссылку «Показать группы»
         self.step_text = U.label(self.T["idle"], "strong")
         top.addWidget(self.step_text)
         top.addStretch()
@@ -630,12 +631,14 @@ class CompressPage(QWidget):
 
         cmp_card, cmp = U.card(margins=(16, 14, 16, 14), spacing=10)
         ctop = QHBoxLayout()
-        ctop.addWidget(U.label(tr("Было → стало"), "h2"))
+        self.cmp_title = U.label(tr("Было → стало"), "h2")
+        ctop.addWidget(self.cmp_title)
         ctop.addStretch()
         self.cmp_name = U.label("", "muted")
         ctop.addWidget(self.cmp_name)
         cmp.addLayout(ctop)
         self.cmp_hint = WrapLabel(self.T["cmp_hint"], "muted")
+        self.cmp_hint.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         cmp.addWidget(self.cmp_hint)
         # Содержимое — в прокрутке: в низком окне карточка ужимается сама, а не сминает соседей.
         self.cmp_scroll = QScrollArea(widgetResizable=True)
@@ -646,6 +649,8 @@ class CompressPage(QWidget):
         inner.setSpacing(10)
         self.cmp_scroll.setWidget(body)
         cmp.addWidget(self.cmp_scroll, 1)
+        # пока файл не выбран, прокрутка скрыта — пустое место уходит вниз, а не раздвигает заголовок и пояснение
+        cmp.addStretch()
         self.pics = QWidget()
         pics = QHBoxLayout(self.pics)
         pics.setContentsMargins(0, 0, 0, 0)
@@ -685,12 +690,12 @@ class CompressPage(QWidget):
 
         bottom = QHBoxLayout()
         bottom.setSpacing(10)
-        mark_all = QPushButton(tr("Отметить все"))
-        mark_all.clicked.connect(lambda: self._mark_all(True))
-        bottom.addWidget(mark_all)
-        unmark = QPushButton(tr("Снять все отметки"))
-        unmark.clicked.connect(lambda: self._mark_all(False))
-        bottom.addWidget(unmark)
+        self.btn_mark_all = QPushButton(tr("Отметить все"))
+        self.btn_mark_all.clicked.connect(lambda: self._mark_all(True))
+        bottom.addWidget(self.btn_mark_all)
+        self.btn_unmark = QPushButton(tr("Снять все отметки"))
+        self.btn_unmark.clicked.connect(lambda: self._mark_all(False))
+        bottom.addWidget(self.btn_unmark)
         self.btn_skipped = QPushButton()
         self.btn_skipped.clicked.connect(self.show_skipped)
         self.btn_skipped.hide()
@@ -724,8 +729,8 @@ class CompressPage(QWidget):
     def _mode_picked(self, key):
         lossless = key == "lossless"
         self.chips["video"].setEnabled(not lossless)
-        self.chips["video"].setToolTip(tr("Видео строго без потерь не сжимается — только в режиме «Без видимых потерь»")
-                                       if lossless else "")
+        U.why(self.chips["video"], tr("Видео строго без потерь не сжимается — только в режиме «Без видимых потерь»")
+              if lossless else "")
         self.mode_text.setText(tr(MODE_TEXT[key][1]))
         self.cfg["compress_mode"] = key
         self.settings_changed.emit()
@@ -977,8 +982,11 @@ class CompressPage(QWidget):
         self.busy = busy
         self.btn_start.setEnabled(not busy)
         self.btn_stop.setEnabled(busy)
+        U.why(self.btn_start, tr("Уже работаю — дождись конца или нажми «Остановить».") if busy else "")
+        U.why(self.btn_stop, "" if busy else tr("Сейчас ничего не идёт — останавливать нечего."))
         for b in self.mode_btns.values():
             b.setEnabled(not busy)
+            U.why(b, tr("Режим можно сменить, когда подготовка закончится.") if busy else "")
         if busy:
             self.flusher.start()                 # готовые копии — в список, пока идёт подготовка
         else:
@@ -1069,6 +1077,14 @@ class CompressPage(QWidget):
         n, saved = len(jobs), sum(j.saved for j in jobs)
         self.btn_replace.setText(self.replace_label(n, saved))
         self.btn_replace.setEnabled(n > 0 and not self.busy)
+        if n and not self.busy:
+            U.why(self.btn_replace, "")
+        elif self.busy:
+            U.why(self.btn_replace, tr("Подожди: файлы ещё готовятся. Нажать можно, когда подготовка закончится."))
+        elif not self.ready:
+            U.why(self.btn_replace, tr("Сначала нажми «{start}» — пока делать нечего.", start=self.T["start"]))
+        else:
+            U.why(self.btn_replace, tr("Отметь галочкой хотя бы один файл в списке."))
         self.summary.setVisible(bool(self.ready))
         if not self.ready:
             self.summary.setText("")

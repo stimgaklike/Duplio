@@ -20,7 +20,7 @@ import shutil
 import struct
 import subprocess
 import threading
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 
 import compcore
 import dupcore
@@ -691,6 +691,147 @@ def inputs(t):
     return set(dupcore.VIDEO_EXT) | {".qt"} | (set(dupcore.AUDIO_EXT) if t.audio_only else set())
 
 
+# ---------------------------------------------------------------- «Подобрать для каждого»: группы
+
+# Что можно сделать с группой: (кнопка в списке, что будет — одной строкой). Слова — как сказал бы человек.
+ACTIONS = {
+    "nothing": ("Не трогать", "Эти файлы останутся как есть."),
+    "mp4": ("Сделать MP4, картинка та же", "Файлы станут MP4. Картинка и звук не изменятся. Это быстро."),
+    "small": ("Сжать, чтобы занимали меньше места",
+              "Видео станут меньше. На глаз разницы не будет — программа проверит каждое. Если меньше не "
+              "выйдет, файл останется как был."),
+    "everywhere": ("Сделать, чтобы открывались везде",
+                   "Видео станут MP4, их откроет любой телефон и телевизор. Видео больше Full HD станут Full HD."),
+    "apple": ("Сделать для iPhone и Mac", "Видео станут MOV, как у iPhone. Если можно, картинка не меняется."),
+    "audio": ("Сохранить только звук (MP3)", "Рядом с каждым видео появится MP3 со звуком. Само видео останется."),
+}
+ACTION_TARGETS = {"mp4": Target("mp4", "copy"), "small": PRESETS["small"][2], "everywhere": PRESETS["everywhere"][2],
+                  "apple": PRESETS["apple"][2], "audio": PRESETS["audio"][2]}
+# Вид группы: (порядок, название, пояснение, действие по умолчанию, подходящие действия)
+KINDS = {
+    "big": (1, "Большие видео", "Занимают много места — их можно сжать.",
+            "small", ("small", "everywhere", "audio", "nothing")),
+    "mov": (2, "Видео MOV (iPhone, фотоаппарат)", "Не все телефоны и телевизоры открывают MOV.",
+            "mp4", ("mp4", "small", "everywhere", "audio", "nothing")),
+    "old": (3, "Старые видео", "AVI, WMV и похожие могут не открыться на телефоне.",
+            "everywhere", ("everywhere", "small", "audio", "nothing")),
+    "hdr": (4, "Яркие HDR-видео", "Если их пересжать, яркость может потеряться — лучше не трогать.",
+            "nothing", ("nothing", "small", "audio")),
+    "fine": (5, "Обычные видео", "Уже сжаты и открываются почти везде.",
+             "nothing", ("nothing", "small", "everywhere", "apple", "audio")),
+    "av1": (6, "Уже сжатые видео", "Меньше их сделать не получится.",
+            "nothing", ("nothing", "everywhere", "audio")),
+    "live": (7, "Видео от «живых фото»", "Это вторая половинка снимка — трогать нельзя, иначе снимок сломается.",
+             "nothing", ("nothing",)),
+}
+OLD_CODECS = {"h264", "hevc", "av1", "vp9"}           # всё прочее (MPEG-4 Part 2, WMV, MPEG-2, MJPEG…) — старое
+OLD_EXT = {".avi", ".wmv", ".mpg", ".mpeg", ".vob", ".flv", ".3gp", ".3g2", ".mts", ".m2ts", ".ts"}
+BIG_RATE = 15_000_000       # бит/с: съёмка камеры (Galaxy 4K — 61 Мбит/с, 1080p — 17) сжимается в разы;
+                            # телефон 720p (3,4 Мбит/с) и WhatsApp — уже экономные, AV1 их не уменьшает
+
+
+def kind_of(info, path):
+    """К какой группе относится видео (ключ KINDS) — по заголовку файла."""
+    ext = os.path.splitext(path)[1].lower()
+    v = compcore._video_stream(info)
+    if LIVE_KEY in (info.get("format", {}).get("tags") or {}):
+        return "live"
+    if v is None:
+        return None
+    codec = v.get("codec_name")
+    if codec not in OLD_CODECS or ext in OLD_EXT:
+        return "old"
+    if _hdr(v) or _side(v, "DOVI"):
+        return "hdr"
+    if codec == "av1":
+        return "av1"
+    if ext in (".mov", ".qt"):
+        return "mov"
+    try:
+        rate = float(info.get("format", {}).get("bit_rate") or 0)
+    except ValueError:
+        rate = 0
+    return "big" if rate >= BIG_RATE else "fine"
+
+
+@dataclass
+class Group:
+    kind: str
+    files: list = field(default_factory=list)      # MediaFile
+    action: str = ""
+
+    @property
+    def size(self):
+        return sum(f.size for f in self.files)
+
+    @property
+    def actions(self):
+        return KINDS[self.kind][4]
+
+
+@dataclass
+class Survey:
+    groups: list = field(default_factory=list)
+    unreadable: list = field(default_factory=list)   # (путь, причина)
+    cloud_skipped: int = 0
+    unsupported: int = 0
+    cancelled: bool = False
+
+
+def survey(root, progress=None, cancel=None):
+    """Посмотреть файлы и разложить по группам (только заголовки — быстро). progress(сделано, всего)."""
+    progress = progress or (lambda *a: None)
+    res, cloud, errors = Survey(), [], []
+    exts = set(dupcore.VIDEO_EXT) | {".qt"}
+    try:
+        if isinstance(root, (list, tuple)):
+            files, res.unsupported = compcore.gather(root, exts, cancel, errors, cloud)
+        else:
+            files = dupcore.collect(root, cancel, errors, take=lambda e: e in exts, cloud=cloud)
+        files = [f for f in files if f.size > 0]
+        res.cloud_skipped = len(cloud)
+        by = {}
+        for i, f in enumerate(files):
+            dupcore._check(cancel)
+            progress(i, len(files))
+            try:
+                kind = kind_of(compcore.probe(f.path), f.path)
+            except Skip as e:
+                res.unreadable.append((f.path, str(e)))
+                continue
+            if kind is None:
+                res.unreadable.append((f.path, "в файле нет видео"))
+                continue
+            by.setdefault(kind, Group(kind, action=KINDS[kind][3])).files.append(f)
+        progress(len(files), len(files))
+        res.groups = sorted(by.values(), key=lambda g: KINDS[g.kind][0])
+        res.unreadable += errors
+    except Cancelled:
+        res.cancelled = True
+    return res
+
+
+def prepare_groups(groups, beside=False, progress=None, cancel=None, load="normal", on_job=None):
+    """Подготовить новые файлы по группам: у каждой — своё действие («Не трогать» — пропуск).
+    «Только звук» — всегда рядом с видео (само видео не выбрасываем)."""
+    plan_by = {}
+    for g in groups:
+        if g.action in ACTION_TARGETS:
+            for f in g.files:
+                plan_by[os.path.normcase(os.path.abspath(f.path))] = (ACTION_TARGETS[g.action],
+                                                                      beside or g.action == "audio")
+    clean_work()
+    taken, lock = set(), threading.Lock()
+
+    def one(job, cancel, gentle, threads, on_part):
+        t, near = plan_by[os.path.normcase(os.path.abspath(job.path))]
+        convert_one(job, t, cancel, gentle, threads, on_part, taken, lock, near)
+        job.keep = near
+    paths = [f.path for g in groups if g.action in ACTION_TARGETS for f in g.files]
+    exts = set(dupcore.VIDEO_EXT) | {".qt"}
+    return compcore.run_jobs(paths, exts, one, WORK, progress, cancel, load, on_job)
+
+
 def prepare(root, target=None, progress=None, cancel=None, load="normal", on_job=None, beside=False):
     """Найти видео в root (папка или перетащенное) и подготовить новые файлы рядом с ними — в рабочей папке."""
     t = target or Target()
@@ -699,4 +840,5 @@ def prepare(root, target=None, progress=None, cancel=None, load="normal", on_job
 
     def one(job, cancel, gentle, threads, on_part):
         convert_one(job, t, cancel, gentle, threads, on_part, taken, lock, beside)
+        job.keep = beside
     return compcore.run_jobs(root, inputs(t), one, WORK, progress, cancel, load, on_job)

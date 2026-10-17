@@ -549,6 +549,54 @@ class Settings(Base):
         self.assertEqual(V.PRESETS["small"][2].device, "cpu")
 
 
+class Groups(Base):
+    def test_files_are_sorted_into_groups_with_a_plain_default(self):
+        iphone_mov(self.p("IMG_0001.MOV"))
+        iphone_mov(self.p("IMG_0002.MOV"), keys=[(V.LIVE_KEY, "1")])
+        old_avi(self.p("old.avi"), seconds=1, size="320x240")
+        fine = self.p("fine.mp4")
+        ff("-i", self.p("IMG_0001.MOV"), "-map", "0", "-c", "copy", fine)
+        res = V.survey(self.root)
+        got = {g.kind: (sorted(os.path.basename(f.path) for f in g.files), g.action) for g in res.groups}
+        self.assertEqual(got, {"mov": (["IMG_0001.MOV"], "mp4"), "live": (["IMG_0002.MOV"], "nothing"),
+                               "old": (["old.avi"], "everywhere"), "fine": (["fine.mp4"], "nothing")})
+        self.assertEqual([g.kind for g in res.groups], ["mov", "old", "fine", "live"])     # по порядку KINDS
+        saved = V.BIG_RATE
+        V.BIG_RATE = 1                              # тот же MP4 — «большой», если битрейт выше порога
+        try:
+            self.assertEqual(V.kind_of(C.probe(fine), fine), "big")
+        finally:
+            V.BIG_RATE = saved
+
+    def test_each_group_gets_its_own_action_sound_always_beside(self):
+        mov = iphone_mov(self.p("IMG_0003.MOV"))
+        avi = old_avi(self.p("old.avi"), seconds=1, size="320x240")
+        res = V.survey(self.root)
+        for g in res.groups:
+            g.action = {"mov": "mp4", "old": "audio"}[g.kind]
+        prep = V.prepare_groups(res.groups)
+        jobs = {os.path.basename(j.path): j for j in prep.jobs}
+        self.assertEqual((jobs["IMG_0003.MOV"].skip, jobs["old.avi"].skip), ("", ""))
+        self.assertEqual((jobs["IMG_0003.MOV"].keep, jobs["old.avi"].keep), (False, True))
+        moved = []
+        bin_dir = tempfile.mkdtemp(prefix="conv_bin_")
+        self.addCleanup(shutil.rmtree, bin_dir, True)
+
+        def to_bin(paths):
+            moved.extend(paths)
+            for x in paths:
+                shutil.move(x, bin_dir)
+            return paths, []
+        done, problems = C.replace(prep.jobs, recycle=to_bin)
+        self.assertEqual((len(done), problems, moved), (2, [], [mov]))          # в Корзину — только MOV
+        self.assertEqual(sorted(os.listdir(self.root)), ["IMG_0003.MP4", "old.avi", "old.mp3"])
+        fresh = iphone_mov(self.p("IMG_0009.MOV"))                        # «Не трогать» — файл есть, но его не берут
+        again = V.survey([fresh])
+        again.groups[0].action = "nothing"
+        self.assertEqual(V.prepare_groups(again.groups).jobs, [])
+        self.assertTrue(os.path.exists(fresh))
+
+
 class AudioOnly(Base):
     def test_sound_from_video_beside_the_original(self):
         src = iphone_mov(self.p("IMG_0006.MOV"))

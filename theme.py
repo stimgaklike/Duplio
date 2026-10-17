@@ -133,6 +133,8 @@ QLineEdit, QComboBox {{ background: {c['surface2']}; border: 1px solid {c['borde
                        padding: 6px 10px; selection-background-color: {c['accent']}; }}
 QLineEdit:focus {{ border-bottom: 2px solid {c['accent']}; }}
 QComboBox:hover {{ border-color: {c['border_hover']}; }}
+QLineEdit:disabled, QComboBox:disabled {{ background: {c['surface']}; color: {c['muted']}; border: 1px dashed {c['border']}; }}
+QComboBox::down-arrow:disabled {{ image: none; }}
 QComboBox::drop-down {{ border: none; width: 28px; }}
 QComboBox::down-arrow {{ image: url({chevron}); width: 12px; height: 12px; }}
 QComboBox QAbstractItemView {{ background: {c['surface']}; border: 1px solid {c['border']};

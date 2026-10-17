@@ -4,8 +4,8 @@ import os
 import subprocess
 
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtWidgets import (QAbstractButton, QComboBox, QFrame, QLabel, QMessageBox, QTabBar,
-                               QVBoxLayout)
+from PySide6.QtWidgets import (QAbstractButton, QComboBox, QFrame, QLabel, QMessageBox, QTabBar, QToolTip,
+                               QVBoxLayout, QWidget)
 
 CLICKABLE = (QAbstractButton, QComboBox, QTabBar)
 
@@ -67,16 +67,34 @@ def warn(parent, text):
     box.exec()
 
 
+WHY = "why"          # свойство виджета: почему он сейчас недоступен
+
+
+def why(widget, text):
+    """Почему widget сейчас недоступен — покажется при наведении и при щелчке по нему ("" — не объяснять).
+
+    Владелец жал на серые кнопки и выключенные списки, и ничего не происходило — непонятно, что не так.
+    """
+    widget.setProperty(WHY, text or "")
+
+
 class HandCursor(QObject):
     """Фильтр событий приложения: у кнопок, вкладок, переключателей и списков — курсор-«пальчик»,
-    у неактивных — обычная стрелка. Ставится один раз на всё приложение."""
+    у неактивных — обычная стрелка; у неактивного с причиной (why) — причина при наведении и при щелчке.
+    Ставится один раз на всё приложение."""
 
     def eventFilter(self, obj, ev):
-        if ev.type() in (QEvent.Polish, QEvent.EnabledChange) and isinstance(obj, CLICKABLE):
+        kind = ev.type()
+        if kind in (QEvent.Polish, QEvent.EnabledChange) and isinstance(obj, CLICKABLE):
             if obj.isEnabled():
                 obj.setCursor(Qt.PointingHandCursor)
             else:
                 obj.unsetCursor()
+        elif (kind in (QEvent.MouseButtonPress, QEvent.ToolTip) and isinstance(obj, QWidget)
+              and not obj.isEnabled() and obj.property(WHY)):
+            pos = ev.globalPosition().toPoint() if kind == QEvent.MouseButtonPress else ev.globalPos()
+            QToolTip.showText(pos, obj.property(WHY), obj)
+            return True
         return False
 
 

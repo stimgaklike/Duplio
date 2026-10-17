@@ -48,6 +48,8 @@ def tables():
     import convcore
     out += [c[0] for c in convcore.CONTAINERS.values()] + [p[0] for p in convcore.PRESETS.values()]
     out += [p[1] for p in convcore.PRESETS.values()]
+    out += [k[1] for k in convcore.KINDS.values()] + [k[2] for k in convcore.KINDS.values()]
+    out += [x for a in convcore.ACTIONS.values() for x in a]
     for table in (convcore.VIDEO_CODECS, convcore.AUDIO_CODECS, convcore.QUALITIES, convcore.SIZES,
                   convcore.FPSES, convcore.DEVICES):
         out += list(table.values())

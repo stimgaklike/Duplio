@@ -164,6 +164,7 @@ class Job:
     detail: str = ""          # подробнее, чем how (под превью): чем кодировалось, что со звуком
     warn: bool = False        # стоит обратить внимание (уже пересжимали, кадр уменьшен, стал больше) — жёлтым
     resized: bool = False     # кадр уменьшен — оригинал в полном размере стоит сохранить
+    keep: bool = False        # новый файл — рядом, оригинал остаётся («Оставить оригиналы», «Только звук»)
 
     @property
     def kind(self):
@@ -970,13 +971,17 @@ def replace(jobs, hwnd=None, progress=None, recycle=None, batch=None, keep=False
     в Корзину — временный файл удаляется, оригинал остаётся как был. В Корзину — пачками:
     одна операция на много файлов в разы быстрее.
     """
-    recycle = recycle or (lambda paths: dupcore.to_recycle_bin(paths, hwnd=hwnd))
-    if keep:
-        recycle = lambda paths: (paths, [])          # «рядом»: оригинал никуда не уходит
+    to_bin = recycle or (lambda paths: dupcore.to_recycle_bin(paths, hwnd=hwnd))
+
+    def recycle(paths):                                # «рядом» (keep у всех или у файла): оригинал остаётся
+        stay = [p for p in paths if keep or stays.get(p)]
+        moved, left = to_bin([p for p in paths if not (keep or stays.get(p))]) if len(stay) < len(paths) else ([], [])
+        return list(moved) + stay, left
+    stays = {j.path: getattr(j, "keep", False) for j in jobs}
     ok, problems = check_before_replace(jobs)
-    if keep:                                           # рядом — значит, под другим именем; иначе это замена
-        problems += [(j.path, "новый файл встал бы на место оригинала") for j in ok if _final(j) == j.path]
-        ok = [j for j in ok if _final(j) != j.path]
+    near = [j for j in ok if keep or getattr(j, "keep", False)]  # рядом — значит, под другим именем
+    problems += [(j.path, "новый файл встал бы на место оригинала") for j in near if _final(j) == j.path]
+    ok = [j for j in ok if not (j in near and _final(j) == j.path)]
     done = []
     finals = set()                                     # новые имена, уже занятые этой заменой
     batch = batch or min(50, dupcore.step_for(len(ok)))

@@ -299,7 +299,16 @@ cv = w.convert
 w.tabs.setCurrentWidget(cv)
 pump(0.2)
 scan_widgets("конвертация: старт")
-cv.folder.setText(vroot)
+cv.use_folder(vroot)                         # «Подобрать для каждого» — группы
+t0 = time.time()
+while cv.surveying and time.time() - t0 < 30:
+    pump(0.05)
+pump(0.5)
+scan_widgets("конвертация: группы")
+cv.group_boxes[cv.survey.groups[0].kind][0].setCurrentIndex(1)
+pump(0.1)
+scan_widgets("конвертация: группы, другой выбор")
+cv.preset_btns["keep"].click()               # дальше — набор «Как есть»
 cv.start()
 cv._show_progress(0, 0, 0, 3, "")
 scan_widgets("конвертация: обход папок")

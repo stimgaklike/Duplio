@@ -661,6 +661,8 @@ class DupsPage(QWidget):
         self.busy = busy
         self.btn_scan.setEnabled(not busy)
         self.btn_stop.setEnabled(busy)
+        U.why(self.btn_scan, tr("Поиск уже идёт — дождись конца или нажми «Остановить».") if busy else "")
+        U.why(self.btn_stop, "" if busy else tr("Сейчас ничего не идёт — останавливать нечего."))
         if busy:
             self.flusher.start()                 # находки — в список, пока идёт поиск
         else:
@@ -867,6 +869,8 @@ class DupsPage(QWidget):
         else:
             self.btn_delete.setText(tr("Удалить в Корзину"))
         self.btn_delete.setEnabled(n > 0)      # удалять можно и во время поиска — найденное уже проверено
+        U.why(self.btn_delete, "" if n else tr("Отметь галочкой копии, которые удалить.") if self.groups else
+              tr("Сначала нажми «Начать поиск» — пока удалять нечего."))
         if not self.groups:
             self.summary.setText("")
             return

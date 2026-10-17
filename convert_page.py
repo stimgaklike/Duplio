@@ -1,4 +1,7 @@
-"""Вкладка «Конвертация»: видео и звук в другой формат — готовые наборы или свой выбор.
+"""Вкладка «Конвертация»: видео и звук в другой формат — «Подобрать для каждого» (группы), наборы или свой выбор.
+
+«Подобрать для каждого»: выбрал папку — программа смотрит заголовки файлов (convcore.survey) и показывает
+группы с понятным действием на каждую; «Подготовить» — convcore.prepare_groups.
 
 Устроена как «Сжатие» (CompressPage): подготовка копий, список «было → станет» с превью кадра, сравнение
 крупно, замена оригиналов (в Корзину) или «положить рядом» (оригинал остаётся). Отличаются карточка
@@ -6,11 +9,13 @@
 """
 
 import os
+import threading
 from dataclasses import replace
 
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor
-
-from PySide6.QtWidgets import QButtonGroup, QCheckBox, QComboBox, QGridLayout, QHBoxLayout, QPushButton, QWidget
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QPushButton,
+                               QScrollArea, QVBoxLayout, QWidget)
 
 import compcore
 import convcore
@@ -20,8 +25,16 @@ from compress_page import CompressPage, WrapLabel, score_text
 from i18n import num, plural, tr
 from logs import log
 
+GROUPS = "groups"           # «Подобрать для каждого» — не набор convcore.PRESETS, а группы
+
+
 def kind_of(path):
     return os.path.splitext(path)[1].lstrip(".").upper()
+
+
+class SurveyBridge(QObject):
+    progress = Signal(int, int)
+    done = Signal(object)
 
 
 class ConvertPage(CompressPage):
@@ -63,14 +76,16 @@ class ConvertPage(CompressPage):
 
     def _build_options(self, grid):
         self.mode_btns = {}
-        self.prepared = None                       # (настройка, рядом ли) последней подготовки
+        self.prepared = None                       # с какими настройками подготовлено (_settings)
+        self.survey, self.survey_root, self.surveying = None, None, False    # группы (convcore.survey)
         grid.addWidget(U.label(tr("Во что"), "strong"), 1, 0)
         row = QHBoxLayout()
         row.setSpacing(8)
         self.preset_group = QButtonGroup(self)
         self.preset_btns = {}
-        for key, (name, _text, _t) in convcore.PRESETS.items():
-            b = QPushButton(tr(name), objectName="chip", checkable=True)
+        chips = [(GROUPS, tr("Подобрать для каждого"))] + [(k, tr(v[0])) for k, v in convcore.PRESETS.items()]
+        for key, name in chips:
+            b = QPushButton(name, objectName="chip", checkable=True)
             self.preset_group.addButton(b)
             b.toggled.connect(lambda on, k=key: on and self._preset_picked(k))
             row.addWidget(b)
@@ -130,14 +145,14 @@ class ConvertPage(CompressPage):
         self._loading = False
         self._fit_combos()
         self._restoring = True                     # выбор из настроек — как был, без «звук → рядом»
-        preset = self.cfg.get("convert_preset", "keep")
-        self.preset_btns[preset if preset in convcore.PRESETS else "keep"].setChecked(True)
+        preset = self.cfg.get("convert_preset", GROUPS)
+        self.preset_btns[preset if preset in self.preset_btns else GROUPS].setChecked(True)
         self.keep_box.setChecked(bool(self.cfg.get("convert_beside")))
         self._restoring = False
         self._update_hint()
 
     def preset(self):
-        return next((k for k, b in self.preset_btns.items() if b.isChecked()), "keep")
+        return next((k for k, b in self.preset_btns.items() if b.isChecked()), GROUPS)
 
     def beside(self):
         return self.keep_box.isChecked()
@@ -150,18 +165,24 @@ class ConvertPage(CompressPage):
         return replace(convcore.PRESETS[key][2])
 
     def _preset_picked(self, key):
-        self.preset_text.setText(tr(convcore.PRESETS[key][1]))
+        self.preset_text.setText(tr(convcore.PRESETS[key][1]) if key != GROUPS else
+                                 tr("Программа посмотрит на твои видео, разложит их по группам и для каждой "
+                                    "предложит, что сделать. Ты сможешь выбрать другое."))
         self.preset_text.setVisible(key != "custom")       # у «Своего» вместо пояснения — сами списки
         self.custom.setVisible(key == "custom")
         if key == "audio" and not self._restoring:
             self.keep_box.setChecked(True)                  # звук из видео — само видео не выбрасываем
         self.cfg["convert_preset"] = key
         self.settings_changed.emit()
+        self._show_groups(key == GROUPS and self.survey is not None and not self.ready)
+        self._update_start()
         self._update_hint()
 
     def _keep_toggled(self, on):
         self.cfg["convert_beside"] = on
         self.settings_changed.emit()
+        if getattr(self, "survey_bridge", None) is not None:
+            self._plan_text()
         self._update_hint()
         self._update_hint()
 
@@ -199,7 +220,7 @@ class ConvertPage(CompressPage):
         missing = convcore.missing_tools()
         hint = tr("Не хватает программ: {names}. Запусти tools/fetch_tools.py.",
                   names=", ".join(missing)) if missing else ""
-        if not hint and self.ready and self.prepared and self.prepared != (self.target(), self.beside()):
+        if not hint and self.ready and self.prepared and self.prepared != self._settings():
             hint = tr("Настройки изменились — нажми «Подготовить файлы», чтобы применить их. Кнопка внизу "
                       "сделает то, что подготовлено.")
         self.hint.setText(hint)
@@ -209,11 +230,242 @@ class ConvertPage(CompressPage):
         missing = convcore.missing_tools()
         if missing:
             return tr("Не хватает программ: {names}. Запусти tools/fetch_tools.py.", names=", ".join(missing))
+        if self.preset() == GROUPS and self._surveyed() and not self._to_do():
+            return tr("Сейчас у всех групп выбрано «Не трогать» — выбери, что сделать, хотя бы для одной.")
         return None
 
+    def _settings(self):
+        """С какими настройками готовим — чтобы заметить, что их поменяли после подготовки."""
+        if self.preset() == GROUPS:
+            return GROUPS, tuple((g.kind, g.action) for g in (self.survey.groups if self.survey else [])), \
+                self.beside()
+        return self.target(), self.beside()
+
+    # ---------- «Подобрать для каждого»: группы
+
+    def _build_rest(self, root, card, cl):
+        super()._build_rest(root, card, cl)
+        self.survey_bridge = SurveyBridge()
+        self.survey_bridge.progress.connect(self._survey_progress)
+        self.survey_bridge.done.connect(self._survey_done)
+        page, lay = U.card(margins=(16, 14, 16, 14), spacing=10)
+        self.groups_scroll = QScrollArea(widgetResizable=True)
+        self.groups_scroll.setFrameShape(QFrame.NoFrame)
+        self.groups_body = QWidget()
+        self.groups_lay = QVBoxLayout(self.groups_body)
+        self.groups_lay.setContentsMargins(0, 0, 0, 0)
+        self.groups_lay.setSpacing(14)
+        self.groups_scroll.setWidget(self.groups_body)
+        lay.addWidget(self.groups_scroll, 1)
+        self.stack.addWidget(page)                  # 2 — группы (0 — заглушка, 1 — готовые файлы)
+        self.groups_page = page
+        self.btn_groups = QPushButton(tr("Показать группы"), objectName="link")
+        self.btn_groups.setToolTip(tr("Вернуться к группам и поменять, что с ними сделать"))
+        self.btn_groups.clicked.connect(lambda: self._show_groups(True))
+        self.btn_groups.hide()
+        self.step_row.insertWidget(1, self.btn_groups)      # рядом с «Готово за …» — вернуться к группам
+        self._update_start()
+
+    def _root(self):
+        if self.drop_files:
+            return tuple(p for p in self.drop_files if os.path.exists(p))
+        return self.folder.text().strip().strip('"')
+
+    def _surveyed(self):
+        return self.survey is not None and self.survey_root == self._root()
+
+    def _to_do(self):
+        return [g for g in self.survey.groups if g.action in convcore.ACTION_TARGETS] if self.survey else []
+
+    def _update_start(self):
+        look = self.preset() == GROUPS and not self._surveyed()
+        self.btn_start.setText(tr("Посмотреть файлы") if look else self.T["start"])
+
+    def use_folder(self, path):
+        super().use_folder(path)
+        self._forget_survey()
+        if self.preset() == GROUPS and not self.busy:
+            self.look()                             # папку выбрали — сразу смотрим, что там (только чтение)
+
+    def use_files(self, paths):
+        super().use_files(paths)
+        if getattr(self, "survey_bridge", None) is None:
+            return                                  # ещё строится окно
+        self._forget_survey()
+        if paths and self.preset() == GROUPS and not self.busy:
+            self.look()
+
+    def _forget_survey(self):
+        self.survey, self.survey_root = None, None
+        if not self.ready:
+            self.stack.setCurrentIndex(0)
+        self.btn_groups.hide()
+        self._show_groups(False)
+        self._update_start()
+
+    def start(self):
+        if self.preset() == GROUPS and not self._surveyed():
+            self.look()
+            return
+        super().start()
+
+    def look(self):
+        """Посмотреть файлы в папке (или перетащенные) и разложить по группам — в фоне, только заголовки."""
+        if self.busy or self.surveying:
+            return
+        root = self._root()
+        if not root or (isinstance(root, str) and not os.path.isdir(root)):
+            U.warn(self, tr("Такой папки нет. Нажми «Выбрать…» и укажи папку."))
+            return
+        self.surveying = True
+        self.btn_start.setEnabled(False)
+        U.why(self.btn_start, tr("Подожди: смотрю, какие тут файлы."))
+        self.step_text.setText(tr("Смотрю, какие тут видео…"))
+        self.status.setText("")
+        self.bar.setRange(0, 0)
+        log.info("Конвертация: смотрю %s", root)
+        threading.Thread(target=lambda: self.survey_bridge.done.emit(
+            convcore.survey(list(root) if isinstance(root, tuple) else root,
+                            lambda d, t: self.survey_bridge.progress.emit(d, t))), daemon=True).start()
+        self._looking_root = root
+
+    def _survey_progress(self, done, total):
+        if total:
+            self.bar.setRange(0, total)
+            self.bar.setValue(done)
+            self.step_text.setText(tr("Смотрю видео: {done} из {total}", done=num(done), total=num(total)))
+
+    def _survey_done(self, res):
+        self.surveying = False
+        self.btn_start.setEnabled(True)
+        U.why(self.btn_start, "")
+        self.bar.setRange(0, 1000)
+        self.bar.setValue(0)
+        self.survey, self.survey_root = res, self._looking_root
+        n = sum(len(g.files) for g in res.groups)
+        log.info("Конвертация: групп %d, видео %d, не прочитались %d", len(res.groups), n, len(res.unreadable))
+        if not n:
+            self.step_text.setText(tr("Видео тут нет."))
+            self.empty.setText(self.T["none_found"])
+            self.stack.setCurrentIndex(0)
+        else:
+            self.step_text.setText(tr("Нашёл {n} {videos}. Проверь, что сделать с каждой группой, и нажми "
+                                      "«Подготовить файлы».", n=num(n),
+                                      videos=plural(n, "видео|видео|видео", "video|videos")))
+            self._fill_groups()
+            self._show_groups(True)
+        extra = []
+        if res.unreadable:
+            extra.append(tr("Не открылись: {n}.", n=num(len(res.unreadable))))
+        if res.cloud_skipped:
+            extra.append(tr("Лежат только в облаке или на телефоне — пропущены: {n}.", n=num(res.cloud_skipped)))
+        self.status.setText(" ".join(extra))
+        self._update_start()
+
+    def _fill_groups(self):
+        while self.groups_lay.count():
+            item = self.groups_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.group_boxes = {}
+        for g in self.survey.groups:
+            _order, name, why_text, _default, actions = convcore.KINDS[g.kind]
+            box = QWidget()
+            v = QVBoxLayout(box)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(4)
+            top = QHBoxLayout()
+            title = U.label(tr(name), "strong")
+            title.setToolTip("\n".join(os.path.basename(f.path) for f in g.files[:30]) +
+                             ("\n…" if len(g.files) > 30 else ""))
+            top.addWidget(title)
+            count = U.label(tr("{n} {videos} · {size}", n=num(len(g.files)),
+                               videos=plural(len(g.files), "видео|видео|видео", "video|videos"),
+                               size=dupcore.human_size(g.size)), "muted")
+            top.addWidget(count)
+            top.addStretch()
+            choose = QComboBox(sizeAdjustPolicy=QComboBox.AdjustToContents)
+            for a in actions:
+                choose.addItem(tr(convcore.ACTIONS[a][0]), a)
+            choose.setCurrentIndex(choose.findData(g.action))
+            choose.currentIndexChanged.connect(lambda _i, g=g, c=choose: self._group_action(g, c.currentData()))
+            if len(actions) == 1:
+                choose.setEnabled(False)
+                U.why(choose, tr("Эти файлы лучше не трогать — выбрать другое нельзя."))
+            top.addWidget(choose)
+            v.addLayout(top)
+            v.addWidget(WrapLabel(tr(why_text), "muted"))
+            result = WrapLabel("", "strong")
+            v.addWidget(result)
+            self.group_boxes[g.kind] = (choose, result)
+            self.groups_lay.addWidget(box)
+            self._group_action(g, g.action)
+        self.groups_lay.addStretch()
+
+    def _group_action(self, g, action):
+        g.action = action
+        _choose, result = self.group_boxes[g.kind]
+        result.setText("→ " + tr(convcore.ACTIONS[action][1]))
+        self._update_hint()
+        self._plan_text()
+
+    def _plan_text(self):
+        """Справа, пока видны группы: что будет со всеми файлами — коротко и до нажатия."""
+        if self.stack.currentIndex() != 2 or not self.survey:
+            return
+        by = {}
+        for g in self.survey.groups:
+            n, size = by.get(g.action, (0, 0))
+            by[g.action] = (n + len(g.files), size + g.size)
+        lines = []
+        for action in convcore.ACTIONS:
+            if action in by:
+                n, size = by[action]
+                lines.append(tr("• {what}: {n} {videos} ({size})", what=tr(convcore.ACTIONS[action][0]), n=num(n),
+                                videos=plural(n, "видео|видео|видео", "video|videos"), size=dupcore.human_size(size)))
+        lines.append("")
+        if not self._to_do():
+            lines.append(tr("Сейчас у всех групп выбрано «Не трогать» — выбери, что сделать, хотя бы для одной."))
+        else:
+            lines.append(tr("Сначала программа всё подготовит и покажет тебе — с файлами ничего не случится, пока "
+                            "ты не нажмёшь кнопку внизу."))
+            if self.beside():
+                lines.append(tr("Новые файлы лягут рядом, оригиналы останутся."))
+            else:
+                lines.append(tr("Новые файлы встанут на место оригиналов, а оригиналы уйдут в Корзину — вернуть "
+                                "можно оттуда. Звук (MP3) всегда кладётся рядом с видео."))
+        self.cmp_hint.setText("\n".join(lines))
+
+    def _show_groups(self, on):
+        if on and self.survey is not None and self.survey.groups:
+            self.stack.setCurrentIndex(2)
+            self.btn_groups.hide()
+            self.show_job(None)
+        elif self.ready:
+            self.stack.setCurrentIndex(1)
+            self.btn_groups.setVisible(self.preset() == GROUPS and self.survey is not None and not self.busy)
+        groups = self.stack.currentIndex() == 2
+        # на шаге групп отмечать и заменять ещё нечего — эти кнопки только путают
+        for b in (self.btn_mark_all, self.btn_unmark, self.btn_replace):
+            b.setVisible(not groups)
+        self.cmp_title.setText(tr("Что будет") if groups else tr("Было → стало"))
+        if groups:
+            self._plan_text()
+        else:
+            self.cmp_hint.setText(self.T["cmp_hint"])
+
     def _job_runner(self, root, load):
+        if self.preset() == GROUPS and self._surveyed():
+            groups, beside = list(self.survey.groups), self.beside()
+            self._show_groups(False)                # готовим — внизу снова кнопки отметок и замены
+            self.prepared = self._settings()
+            self._update_hint()
+            log.info("Конвертация по группам: %s · %s", ", ".join(f"{g.kind}:{len(g.files)}→{g.action}"
+                                                                  for g in groups), "рядом" if beside else "замена")
+            return lambda progress, cancel, on_job: convcore.prepare_groups(groups, beside, progress, cancel, load,
+                                                                            on_job=on_job)
         t, beside = self.target(), self.beside()
-        self.prepared = (t, beside)
+        self.prepared = self._settings()
         self._update_hint()
         log.info("Конвертация: %s · %s · %s · нагрузка %s", root, t.as_dict(), "рядом" if beside else "замена",
                  load)
@@ -222,6 +474,7 @@ class ConvertPage(CompressPage):
 
     def _finish(self, res):
         super()._finish(res)
+        self._show_groups(False)
         self._update_hint()
 
     # ---------- список и сравнение
@@ -260,10 +513,8 @@ class ConvertPage(CompressPage):
     # ---------- замена или «рядом»
 
     def _prepared_beside(self):
-        return bool(self.prepared and self.prepared[1])
-
-    def replace_args(self):
-        return {"keep": self._prepared_beside()}
+        jobs = self._marked_jobs() or self.ready
+        return bool(jobs) and all(j.keep for j in jobs)
 
     def replacing_text(self, done, total):
         if self._prepared_beside():
@@ -274,21 +525,38 @@ class ConvertPage(CompressPage):
         if not n:
             return tr("Положить рядом") if self._prepared_beside() else tr("Заменить оригиналы")
         files = plural(n, "файл|файла|файлов", "file|files")
-        if self._prepared_beside():
+        keep = [j.keep for j in self._marked_jobs()]
+        if all(keep):
             return tr("Положить рядом {n} {files}", n=num(n), files=files)
+        if any(keep):
+            return tr("Готово: применить к {n} {files}", n=num(n), files=plural(n, "файлу|файлам|файлам",
+                                                                                 "file|files"))
         return tr("Заменить {n} {files}", n=num(n), files=files)
 
     def ask_text(self, ok):
+        near, swap = [j for j in ok if j.keep], [j for j in ok if not j.keep]
+        if near and swap:
+            text = tr("Что будет:\n• {swap} {swap_files} встанут на место оригиналов — оригиналы уйдут в Корзину, "
+                      "вернуть можно оттуда;\n• {near} {near_files} лягут рядом с оригиналами — оригиналы "
+                      "останутся.", swap=num(len(swap)), swap_files=plural(len(swap), "новый файл|новых файла|новых "
+                                                                            "файлов", "new file|new files"),
+                      near=num(len(near)), near_files=plural(len(near), "новый файл|новых файла|новых файлов",
+                                                             "new file|new files"))
+            return text + self._resize_warning(swap)
         files = plural(len(ok), "файл|файла|файлов", "file|files")
         exts = ", ".join(sorted({os.path.splitext(compcore._final(j))[1].lower() for j in ok}))
-        if self._prepared_beside():
+        if not swap:
             return tr("Положить {n} {files} рядом с оригиналами? Оригиналы останутся на месте.\n\n"
                       "Новые файлы: то же имя, расширение — {exts}, даты файлов — как у оригиналов.",
                       n=num(len(ok)), files=files, exts=exts)
         text = tr("Заменить {n} {files} новыми? Оригиналы уйдут в Корзину — вернуть можно оттуда.\n\n"
                   "Новые файлы встанут на их место: то же имя, расширение — {exts}, даты файлов — прежние.",
                   n=num(len(ok)), files=files, exts=exts)
-        small = sum(j.resized for j in ok)
+        return text + self._resize_warning(ok)
+
+    def _resize_warning(self, swap):
+        small = sum(j.resized for j in swap)
+        text = ""
         if small:
             text += tr("\n\n⚠ У {n} {files} кадр уменьшен (например, 4K → 1080p): оригиналы в полном размере уйдут "
                        "в Корзину. Чтобы их сохранить, отметь «Оставить оригиналы» и подготовь заново.",
@@ -296,7 +564,7 @@ class ConvertPage(CompressPage):
         return text
 
     def done_texts(self, done):
-        if self._prepared_beside():
+        if done and all(j.keep for j in done):
             text = tr("Готово файлов: {n}. Они лежат рядом с оригиналами.", n=num(len(done)))
         else:
             text = tr("Заменено файлов: {n}. Оригиналы — в Корзине.", n=num(len(done)))
