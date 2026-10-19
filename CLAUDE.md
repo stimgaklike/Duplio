@@ -24,7 +24,7 @@ https://github.com/stimgaklike/Duplio. План — `ROADMAP.md`, история
 | `thumbs.py` | превью: фото — QImageReader в QThreadPool; видео — кадр через QMediaPlayer+QVideoSink (без ffmpeg) |
 | `updater.py` | GitHub Releases API → `Update`; скачивание с проверкой размера и SHA-256 (`digest` из API); тихая установка |
 | `i18n.py` | `tr("русский шаблон {x}", x=…)`; английский — словарь `EN`; `plural`, `num`, `decimal` |
-| `logs.py` | журнал `%LOCALAPPDATA%\Duplio\logs`, до 3 МБ, перехват ошибок (главный поток, потоки, Qt) |
+| `logs.py` | журнал `%LOCALAPPDATA%\Duplio\logs`, до 3 МБ, перехват ошибок (главный поток, потоки, Qt); вылет внутри C (access violation) — `faulthandler` в `crash.log`, при следующем запуске переносится в журнал (`_crash_trap`) |
 | `settings.py` | `%APPDATA%\Duplio\settings.json`, `sanitize` — неверные значения → по умолчанию |
 | `theme.py`, `icons/` | QSS светлой/тёмной темы, значки; `tools/make_brand.py` делает значки из `branding/src` |
 | `installer.iss`, `build.bat`, `prune_build.py` | установщик Inno Setup (для текущего пользователя, без UAC; открытый Duplio закрывает сам — пишет `duplio:quit` в его канал; при обновлении — «Обновление Duplio», «Обновить»; из программы `/UPDATE=1` — тихо ждёт её закрытия), сборка PyInstaller папкой |
