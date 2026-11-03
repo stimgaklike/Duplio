@@ -31,6 +31,12 @@ DEFAULTS = {
     "meta_groups": ["place", "camera", "time", "author", "thumb", "other"],
     "meta_output": "replace",    # replace — заменить оригиналы, copies — очищенные копии в папку
     "meta_copies": "",
+    "dl_folder": "",             # куда «Скачать» кладёт файлы; пусто — Загрузки\Duplio
+    "dl_kind": "video",          # video / audio
+    "dl_quality": "best",        # best / 1080 / 720 / 480
+    "dl_audio": "mp3",           # mp3 / m4a
+    "dl_allowed": False,         # человек разрешил скачать yt-dlp
+    "dl_checked": 0,             # когда последний раз проверяли новую версию yt-dlp
 }
 META_GROUPS = {"place", "camera", "time", "author", "thumb", "other"}
 
@@ -58,6 +64,9 @@ ALLOWED = {
     "compress_mode": {"lossless", "visual"},
     "meta_preset": {"all", "place", "custom"},
     "meta_output": {"replace", "copies"},
+    "dl_kind": {"video", "audio"},
+    "dl_quality": {"best", "1080", "720", "480"},
+    "dl_audio": {"mp3", "m4a"},
 }
 KINDS = {"photo", "video", "audio", "docs", "archives", "other"}
 
@@ -70,7 +79,7 @@ def sanitize(data):
     kinds = data.get("kinds")
     if not isinstance(kinds, list) or not set(kinds) <= KINDS:
         data["kinds"] = list(DEFAULTS["kinds"])
-    for key in ("tray_hint_shown", "check_updates"):
+    for key in ("tray_hint_shown", "check_updates", "dl_allowed"):
         if not isinstance(data.get(key), bool):
             data[key] = DEFAULTS[key]
     ck = data.get("compress_kinds")
@@ -79,11 +88,12 @@ def sanitize(data):
     mg = data.get("meta_groups")
     if not isinstance(mg, list) or not set(mg) <= META_GROUPS:
         data["meta_groups"] = list(DEFAULTS["meta_groups"])
-    for key in ("last_folder", "compress_folder", "meta_folder", "meta_copies"):
+    for key in ("last_folder", "compress_folder", "meta_folder", "meta_copies", "dl_folder"):
         if not isinstance(data.get(key), str):
             data[key] = ""
-    if not isinstance(data.get("last_update_check"), (int, float)):
-        data["last_update_check"] = 0
+    for key in ("last_update_check", "dl_checked"):
+        if not isinstance(data.get(key), (int, float)) or isinstance(data.get(key), bool):
+            data[key] = 0
     return data
 
 

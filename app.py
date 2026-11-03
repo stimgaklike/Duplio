@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabe
 
 import compcore
 import convcore
+import dlcore
 import dupcore
 import i18n
 import logs
@@ -193,6 +194,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         from compress_page import CompressPage      # после выбора языка: тексты вкладок берутся при создании
         from convert_page import ConvertPage
+        from download_page import DownloadPage
         from dups_page import DupsPage
         from meta_page import MetaPage
         from settings_page import SettingsPage
@@ -222,11 +224,13 @@ class MainWindow(QMainWindow):
         self.compress = CompressPage(cfg, self.colors)
         self.convert = ConvertPage(cfg, self.colors)
         self.meta = MetaPage(cfg, self.colors)
+        self.download = DownloadPage(cfg, self.colors)
         self.settings = SettingsPage(cfg)
         self.tabs.addTab(self.dups, tr("Дубликаты"))
         self.tabs.addTab(self.compress, tr("Сжатие"))
         self.tabs.addTab(self.convert, tr("Конвертация"))
         self.tabs.addTab(self.meta, tr("Метаданные"))
+        self.tabs.addTab(self.download, tr("Скачать"))
         self.tabs.addTab(self.settings, tr("Настройки"))
         col.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
@@ -255,6 +259,9 @@ class MainWindow(QMainWindow):
         self.meta.title_changed.connect(self._title)
         self.meta.go_settings.connect(lambda: self.tabs.setCurrentWidget(self.settings))
         self.meta.settings_changed.connect(lambda: settings.save(self.cfg))
+        self.download.title_changed.connect(self._title)
+        self.download.settings_changed.connect(lambda: settings.save(self.cfg))
+        self.download.send.connect(self._send_to)
         self.settings.theme_changed.connect(self.apply_theme)
         self.settings.restart_requested.connect(self.restart)
         self.settings.check_updates_requested.connect(lambda: self.check_updates(manual=True))
@@ -430,6 +437,11 @@ class MainWindow(QMainWindow):
                        "пропадут."),
                     tr("Идёт конвертация. Закрыть программу и остановить её? Готовые файлы пропадут."),
                     tr("Продолжить конвертацию"))
+        if self.download.busy:
+            return (tr("Сейчас идёт скачивание — если закрыть программу, оно остановится. Уже скачанное "
+                       "останется в папке."),
+                    tr("Идёт скачивание. Закрыть программу и остановить его? Уже скачанное останется в папке."),
+                    tr("Продолжить скачивание"))
         if self.meta.busy:
             return (tr("Сейчас идёт работа с метаданными — если закрыть программу, она остановится. "
                        "Уже готовые файлы останутся готовыми."),
@@ -493,13 +505,14 @@ class MainWindow(QMainWindow):
             return
         if self.dups.cancel:
             self.dups.cancel.set()
-        for page in (self.compress, self.convert):
+        for page in (self.compress, self.convert, self.download):
             if page.cancel:
                 page.cancel.set()
         self.meta.finish_before_exit()          # замену, начатую на «Метаданных», не обрываем на середине
         compcore.clean_work()                   # сжатые копии, которые не заменили оригиналы, больше не нужны
         convcore.clean_work()
         metacore.clean_work()
+        dlcore.clean_work()                     # недокачанные куски
         settings.save(self.cfg)
         log.info("Выход")
         release_mutex()
@@ -525,6 +538,7 @@ class MainWindow(QMainWindow):
         if self.meta.items:
             self.meta.refresh()
         self.meta.update()
+        self.download.refresh()
 
     # ---------- второй запуск
 
@@ -541,7 +555,7 @@ class MainWindow(QMainWindow):
         dirs = [p for p in paths if os.path.isdir(p)]
         files = [p for p in paths if not os.path.isdir(p)]
         media = compcore.wanted_ext({"photo", "video"})
-        if cur is self.settings:
+        if cur is self.settings or cur is self.download:       # там папок не берут — как с «Настроек»
             cur = self.compress if files and not dirs and all(
                 os.path.splitext(p)[1].lower() in media for p in files) else self.dups
         if cur.busy:
@@ -576,6 +590,20 @@ class MainWindow(QMainWindow):
                     tr("Сжатые копии начну готовить по кнопке."))
         return (cur, tr("Отпусти — сожму только {what}", what=tr(" и ").join(self._drop_parts(dirs, files))),
                 tr("Остальные файлы в папках не трону. Сжатые копии начну готовить по кнопке."))
+
+    def _send_to(self, key, paths):
+        """Скачанное — во вкладку «Сжатие» / «Конвертация» / «Метаданные»: только эти файлы, запуск — кнопкой там."""
+        page = {"compress": self.compress, "convert": self.convert, "meta": self.meta}[key]
+        if not paths:
+            return
+        if page.busy:
+            what = tr("сжатие") if page is self.compress else tr("конвертация") if page is self.convert else \
+                tr("работа с метаданными")
+            U.warn(self, tr("Сейчас идёт {what} — дождись конца или останови его.", what=what))
+            return
+        log.info("Скачанное → %s: %d", type(page).__name__, len(paths))
+        self.tabs.setCurrentWidget(page)
+        page.use_files(paths)
 
     @staticmethod
     def _drop_parts(dirs, files):
@@ -708,6 +736,7 @@ def main():
     updater.cleanup()                                 # установщик прошлого обновления больше не нужен
     compcore.clean_work()                             # сжатые копии от прошлого запуска (если он упал)
     convcore.clean_work()
+    dlcore.clean_work()
     win = MainWindow(cfg)
     win.server = listen(win)
     win.show()

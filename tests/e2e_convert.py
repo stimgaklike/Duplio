@@ -162,7 +162,7 @@ pump(0.6)
 
 # ---------- начальное состояние
 tabs = [w.tabs.tabText(i) for i in range(w.tabs.count())]
-check(tabs == ["Дубликаты", "Сжатие", "Конвертация", "Метаданные", "Настройки"], f"вкладки: {tabs}")
+check(tabs == ["Дубликаты", "Сжатие", "Конвертация", "Метаданные", "Скачать", "Настройки"], f"вкладки: {tabs}")
 check(c.btn_start.text() == "Посмотреть файлы" and c.btn_replace.text() == "Заменить оригиналы"
       and not c.btn_replace.isEnabled(), "кнопки до подготовки: сначала — посмотреть файлы")
 from PySide6.QtTest import QTest  # noqa: E402

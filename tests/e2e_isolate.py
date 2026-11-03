@@ -11,9 +11,10 @@ import tempfile
 
 import compcore
 import convcore
+import dlcore
 import metacore
 
-REAL = {m: m.WORK for m in (compcore, convcore, metacore)}
+REAL = {m: m.WORK for m in (compcore, convcore, metacore, dlcore)}
 for _mod in REAL:
     _mod.WORK = tempfile.mkdtemp(prefix=f"dup_e2e_{_mod.__name__}_")
     atexit.register(shutil.rmtree, _mod.WORK, True)

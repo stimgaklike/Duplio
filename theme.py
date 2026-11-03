@@ -132,6 +132,9 @@ QPushButton#link:pressed {{ color: {c['accent_pressed']}; padding: 0; }}
 QLineEdit, QComboBox {{ background: {c['surface2']}; border: 1px solid {c['border']}; border-radius: 6px;
                        padding: 6px 10px; selection-background-color: {c['accent']}; }}
 QLineEdit:focus {{ border-bottom: 2px solid {c['accent']}; }}
+QPlainTextEdit {{ background: {c['surface2']}; color: {c['text']}; border: 1px solid {c['border']}; border-radius: 6px;
+                 padding: 3px 6px; selection-background-color: {c['accent']}; }}
+QPlainTextEdit:focus {{ border-bottom: 2px solid {c['accent']}; }}
 QComboBox:hover {{ border-color: {c['border_hover']}; }}
 QLineEdit:disabled, QComboBox:disabled {{ background: {c['surface']}; color: {c['muted']}; border: 1px dashed {c['border']}; }}
 QComboBox::down-arrow:disabled {{ image: none; }}

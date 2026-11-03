@@ -31,12 +31,12 @@ class E2EIsolation(unittest.TestCase):
     def test_isolation_points_every_work_folder_to_temp(self):
         # Отдельный процесс: подмена — при импорте, а здесь модули уже могли быть загружены другими тестами.
         code = ("import sys; sys.path[:0] = [%r, %r]\n"
-                "import e2e_isolate, compcore, convcore, metacore\n"
-                "for m in (compcore, convcore, metacore): print(m.WORK, '|', e2e_isolate.REAL[m])") % (
+                "import e2e_isolate, compcore, convcore, metacore, dlcore\n"
+                "for m in (compcore, convcore, metacore, dlcore): print(m.WORK, '|', e2e_isolate.REAL[m])") % (
                     HERE, os.path.dirname(HERE))
         out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8",
                              check=True).stdout.strip().splitlines()
-        self.assertEqual(len(out), 3)
+        self.assertEqual(len(out), 4)
         temp = os.path.normcase(os.path.realpath(tempfile.gettempdir()))
         for line in out:
             now, real = (os.path.normcase(os.path.realpath(x.strip())) for x in line.split("|"))

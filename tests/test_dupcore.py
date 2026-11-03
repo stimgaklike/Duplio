@@ -346,6 +346,16 @@ class SettingsFile(unittest.TestCase):
         self.assertEqual((good["compress_mode"], good["compress_kinds"], good["compress_folder"]),
                          ("visual", ["video"], r"E:\Фото"))
 
+    def test_bad_download_values_fall_back_to_defaults(self):
+        import settings
+        keys = ("dl_kind", "dl_quality", "dl_audio", "dl_allowed", "dl_checked", "dl_folder")
+        bad = settings.sanitize(dict(settings.DEFAULTS, dl_kind="всё", dl_quality=1080, dl_audio="wav",
+                                     dl_allowed="да", dl_checked=True, dl_folder=None))
+        self.assertEqual(tuple(bad[k] for k in keys), ("video", "best", "mp3", False, 0, ""))
+        good = settings.sanitize(dict(settings.DEFAULTS, dl_kind="audio", dl_quality="720", dl_audio="m4a",
+                                      dl_allowed=True, dl_checked=1_700_000_000.5, dl_folder=r"E:\Видео"))
+        self.assertEqual(tuple(good[k] for k in keys), ("audio", "720", "m4a", True, 1_700_000_000.5, r"E:\Видео"))
+
     def test_old_setting_close_to_tray_false_means_quit(self):
         import json
         import settings

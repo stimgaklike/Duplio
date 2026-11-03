@@ -28,7 +28,7 @@ def literals():
             if not isinstance(node, ast.Call):
                 continue
             name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
-            if name not in ("tr", "Skip", "OSError"):
+            if name not in ("tr", "Skip", "OSError", "Failed"):
                 continue
             for arg in node.args[:2]:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and CYR.search(arg.value):
@@ -50,6 +50,8 @@ def tables():
     out += [p[1] for p in convcore.PRESETS.values()]
     out += [k[1] for k in convcore.KINDS.values()] + [k[2] for k in convcore.KINDS.values()]
     out += [x for a in convcore.ACTIONS.values() for x in a]
+    import dlcore
+    out += list(dlcore.KINDS.values()) + list(dlcore.QUALITIES.values()) + [why for _rx, why in dlcore.REASONS]
     for table in (convcore.VIDEO_CODECS, convcore.AUDIO_CODECS, convcore.QUALITIES, convcore.SIZES,
                   convcore.FPSES, convcore.DEVICES):
         out += list(table.values())

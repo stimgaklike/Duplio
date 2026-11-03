@@ -21,16 +21,19 @@ atexit.register(shutil.rmtree, tmp_cfg, True)          # убрать и при 
 settings.DIR, settings.PATH = tmp_cfg, os.path.join(tmp_cfg, "settings.json")
 
 from PySide6.QtWidgets import (QAbstractButton, QApplication, QComboBox, QLabel, QLineEdit, QMenu,  # noqa: E402
-                               QTabBar, QTreeWidget, QWidget)
+                               QPlainTextEdit, QTabBar, QTreeWidget, QWidget)
 
 import app  # noqa: E402
 import e2e_isolate  # noqa: E402,F401  — рабочие папки всех вкладок временные
+import dlcore  # noqa: E402
 import dups_page  # noqa: E402
 import ui_util  # noqa: E402
 import updater  # noqa: E402
 
 CYR = re.compile("[А-Яа-яЁё]")
 ALLOWED = {"Русский"}       # название языка пишут на нём самом — чтобы найти свой язык в чужом интерфейсе
+# названия роликов с «сайта» (fake_ytdlp.py) — данные, а не надписи программы
+ALLOWED |= {"Первое", "Второе"} | {"Клип " + k for k in ("ok", "playlist", "js", "forbid_always")}
 shots = sys.argv[1] if len(sys.argv) > 1 else tempfile.gettempdir()
 root = tempfile.mkdtemp(prefix="dup_en_")
 atexit.register(shutil.rmtree, root, True)          # убрать и при обрыве прогона
@@ -79,8 +82,9 @@ def scan_widgets(where):
             texts.append(wd.text())
         if isinstance(wd, QAbstractButton) and re.search(r"&(?!&)", wd.text()):
             found.setdefault(wd.text() + "  ← одиночный & на кнопке Qt съест", where)
-        if isinstance(wd, QLineEdit):
+        if isinstance(wd, (QLineEdit, QPlainTextEdit)):
             texts.append(wd.placeholderText())
+        texts.append(wd.property(ui_util.WHY) or "")       # почему недоступно — тоже видно человеку
         if isinstance(wd, QComboBox):
             texts += [wd.itemText(i) for i in range(wd.count())]
         if isinstance(wd, QMenu):
@@ -349,6 +353,31 @@ w.grab().save(os.path.join(shots, "en_convert.png"))
 for t in tray_said:
     if CYR.search(t):
         found.setdefault(t, "трей")
+# «Скачать»: поддельный yt-dlp, строки во всех состояниях, итог, причины, «идёт скачивание» при выходе
+dlcore.COMMAND = [sys.executable, os.path.join(os.path.dirname(__file__), "fake_ytdlp.py")]
+dlcore.TOOLS = os.path.join(root, "tools")
+dl = w.download
+dl.folder.setText(os.path.join(root, "dl"))
+cfg["dl_checked"] = time.time()
+w.tabs.setCurrentWidget(dl)
+dl.links.setPlainText("https://example.com/v/ok\nhttps://example.com/v/playlist\nhttps://example.com/v/drm\n"
+                      "https://example.com/v/js\nhttps://example.com/v/forbid_always")
+dl.start()
+pump(0.2)
+scan_widgets("скачать: идёт")
+said.extend(x for x in (w.busy_note() or ()) if isinstance(x, str))
+t0 = time.time()
+while dl.busy and time.time() - t0 < 60:
+    pump(0.1)
+for st in ("wait", "look", "work", "had", "stopped"):
+    said.append(dl.state_text(dlcore.Item("https://x", state=st, stage="process" if st == "work" else "")))
+said.append(dl.state_text(dlcore.Item("https://x", state="work", stage="download", percent=40, speed=1e6, eta=70)))
+dl.tree.topLevelItem(0).setSelected(True)
+dl.kind_btns["audio"].click()
+pump(0.2)
+scan_widgets("скачать: готово")
+w.grab().save(os.path.join(shots, "en_download.png"))
+dl.kind_btns["video"].click()
 for page in (w.compress, w.convert, w.meta, w.settings):
     w.tabs.setCurrentWidget(page)
     pump(0.3)
