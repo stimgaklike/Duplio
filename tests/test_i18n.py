@@ -48,7 +48,7 @@ def tables():
     import convcore
     out += [c[0] for c in convcore.CONTAINERS.values()] + [p[0] for p in convcore.PRESETS.values()]
     out += [p[1] for p in convcore.PRESETS.values()]
-    out += [k[1] for k in convcore.KINDS.values()] + [k[2] for k in convcore.KINDS.values()]
+    out += [k[1] for k in convcore.KINDS.values()] + [k[2] for k in convcore.KINDS.values() if k[2]]
     out += [x for a in convcore.ACTIONS.values() for x in a]
     import dlcore
     out += list(dlcore.KINDS.values()) + list(dlcore.QUALITIES.values()) + [why for _rx, why in dlcore.REASONS]

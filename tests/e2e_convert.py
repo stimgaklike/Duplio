@@ -178,7 +178,8 @@ check(c.preset() == "groups" and "по группам" in c.preset_text.text() a
 check(not c.keep_box.isChecked() and "в Корзину" in c.keep_box.toolTip(), "по умолчанию оригинал заменяется")
 check(not hasattr(c, "chips") and c.mode_btns == {}, "режимов и типов «Сжатия» у «Конвертации» нет")
 check([tr_btn.text() for tr_btn in c.preset_btns.values()] ==
-      ["Подобрать для каждого", "Как есть", "Откроется везде", "Меньше места", "Для Apple", "Только звук", "Свой"],
+      ["Подобрать для каждого", "В MP4", "Для всех устройств", "Сжать", "Для iPhone", "Звук в MP3",
+       "Свой"],
       "наборы")
 shot("qt_convert_start.png")
 
@@ -192,13 +193,97 @@ check(kinds == {"mov": ["IMG_0001.MOV", "прогулка.mov"], "old": ["MVI_00
 check(c.stack.currentIndex() == 2 and c.cmp_title.text() == "Что будет" and c.btn_start.text() == "Подготовить файлы",
       "видны группы, справа — «Что будет», кнопка — «Подготовить файлы»")
 check(not c.btn_replace.isVisible() and not c.btn_mark_all.isVisible(), "на шаге групп кнопок замены и отметок нет")
-check("ничего не случится, пока ты не нажмёшь кнопку внизу" in c.cmp_hint.text(), "справа обещание: пока не нажмёшь")
+check("Файлы не изменятся, пока ты не согласишься" in c.cmp_hint.text(), "справа обещание: пока не согласишься")
 live_box = c.group_boxes["live"][0]
 check(not live_box.isEnabled() and live_box.count() == 1, "у «живых фото» выбрать нельзя — только «Не трогать»")
 shot("qt_convert_groups.png")
-c.group_boxes["old"][0].setCurrentIndex(c.group_boxes["old"][0].findData("nothing"))
+
+
+def ink_count(widget):
+    """Сколько точек букв (заметно отличаются по яркости от фона в углу)."""
+    img = widget.grab().toImage()
+    bg = img.pixelColor(0, 0)
+    return sum(abs(img.pixelColor(x, y).lightness() - bg.lightness()) > 60
+               for y in range(img.height()) for x in range(img.width()))
+
+
+result = c.group_boxes["mov"][1]
+plain = ink_count(result)
+result.setStyleSheet("font-weight: 700")
 pump(0.1)
-check("• Не трогать: 2 видео" in c.cmp_hint.text(), "сводка справа меняется вместе с выбором: " + c.cmp_hint.text()[:60])
+bold = ink_count(result)
+result.setStyleSheet("")
+pump(0.1)
+check(result.text().startswith("→ ") and plain < bold * 0.85,
+      f"строка «→» под группой — обычным шрифтом, не жирным (точек букв {plain}, жирным было бы {bold})")
+
+
+def pick(kind, action):
+    box = c.group_boxes[kind][0]
+    box.setCurrentIndex(box.findData(action))
+    pump(0.1)
+
+
+check("MP3" not in c.cmp_hint.text() and "Оригиналы уйдут в Корзину." in c.cmp_hint.text(),
+      "звук не выбран — про MP3 справа ни слова, оригиналы — в Корзину")
+pick("old", "audio")
+check("MP3 ляжет рядом с видео." in c.cmp_hint.text() and "Оригиналы уйдут в Корзину." in c.cmp_hint.text(),
+      "выбран звук — справа строка «MP3 ляжет рядом»")
+pick("mov", "nothing")
+check("MP3 ляжет рядом с видео." in c.cmp_hint.text() and "Корзин" not in c.cmp_hint.text(),
+      "только звук — про Корзину ни слова (оригиналы не уходят)")
+pick("mov", "mp4")
+
+# окно минимального размера: группы целиком — списки действий не обрезаны, вбок не прокручивается
+size = w.size()
+w.resize(w.minimumWidth(), w.minimumHeight())
+pump(0.5)
+view = c.groups_scroll.viewport()
+cut = [(k, b.currentText(), b.width(), b.sizeHint().width(), b.mapTo(view, b.rect().topRight()).x(), view.width())
+       for k, (b, _r) in c.group_boxes.items()
+       if b.width() < b.sizeHint().width() or b.mapTo(view, b.rect().topRight()).x() >= view.width()]
+check(not cut and not c.groups_scroll.horizontalScrollBar().isVisible(),
+      f"в окне минимального размера группы целиком: обрезано {cut}, "
+      f"прокрутка вбок {c.groups_scroll.horizontalScrollBar().isVisible()}")
+check(not layout_problems(), f"на шаге групп в окне минимального размера ничего не обрезано: {layout_problems()}")
+edges = {b.mapTo(view, b.rect().topLeft()).x() for b, _r in c.group_boxes.values()}
+check(len(edges) == 1, f"списки действий — ровным столбцом, а не ступеньками: левые края {sorted(edges)}")
+shot("qt_convert_groups_min.png")
+w.resize(size)
+pump(0.3)
+
+pick("old", "nothing")
+check("• Останутся как есть: 2 видео" in c.cmp_hint.text(),
+      "сводка справа меняется вместе с выбором: " + c.cmp_hint.text()[:60])
+
+# набор при показанных группах: группы уходят (готовить будут набор), вернулся — группы снова
+c.preset_btns["small"].click()
+pump(0.2)
+check(c.stack.currentIndex() == 0 and c.cmp_title.text() == "Было → стало" and "групп" not in c.step_text.text()
+      and c.step_text.text() == "Нажми «Подготовить файлы».",
+      f"выбран набор — групп на экране нет (страница {c.stack.currentIndex()}, «{c.step_text.text()}»)")
+shot("qt_convert_groups_to_preset.png")
+c.preset_btns["groups"].click()
+pump(0.2)
+check(c.stack.currentIndex() == 2 and c.cmp_title.text() == "Что будет" and "с каждой группой" in c.step_text.text()
+      and "• Останутся как есть: 2 видео" in c.cmp_hint.text(),
+      f"вернулся к «Подобрать для каждого» — группы с прежним выбором ({c.stack.currentIndex()})")
+
+# «Звук в MP3» ставит «Оставить оригиналы» сам — и сам снимает, когда ушёл с набора; поставленную человеком не трогает
+c.preset_btns["audio"].click()
+pump(0.1)
+check(c.keep_box.isChecked(), "«Звук в MP3» сам поставил «Оставить оригиналы»")
+c.preset_btns["groups"].click()
+pump(0.1)
+check(not c.keep_box.isChecked() and not c.cfg["convert_beside"],
+      "ушёл со «Звука в MP3» — галочка, которую он поставил, снята")
+c.keep_box.setChecked(True)
+c.preset_btns["audio"].click()
+c.preset_btns["groups"].click()
+pump(0.1)
+check(c.keep_box.isChecked(), "галочку поставил человек — уход со «Звука в MP3» её не снимает")
+c.keep_box.setChecked(False)
+pump(0.1)
 c.start()
 wait(lambda: not c.busy, 120)
 pump(0.5)
@@ -386,7 +471,7 @@ j = next((x for x in c.ready), None)
 check(j is not None and j.how.startswith("AV1 · CRF ") and j.check == "vmaf", f"пересжато: {j and j.how}")
 c.combos["quality"].setCurrentIndex(c.combos["quality"].findData("small"))
 pump(0.1)
-check(c.hint.isVisible() and "Настройки изменились" in c.hint.text(), "после смены настроек — «подготовь заново»")
+check(c.hint.isVisible() and "Выбор изменился" in c.hint.text(), "после смены настроек — «подготовь заново»")
 c.combos["quality"].setCurrentIndex(c.combos["quality"].findData("auto"))
 pump(0.1)
 check(not c.hint.isVisible(), "вернул как было — подсказка ушла")

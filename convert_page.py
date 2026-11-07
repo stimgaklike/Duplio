@@ -166,19 +166,25 @@ class ConvertPage(CompressPage):
 
     def _preset_picked(self, key):
         self.preset_text.setText(tr(convcore.PRESETS[key][1]) if key != GROUPS else
-                                 tr("Программа посмотрит на твои видео, разложит их по группам и для каждой "
-                                    "предложит, что сделать. Ты сможешь выбрать другое."))
+                                 tr("Разложу видео по группам и предложу, что с каждой сделать."))
         self.preset_text.setVisible(key != "custom")       # у «Своего» вместо пояснения — сами списки
         self.custom.setVisible(key == "custom")
         if key == "audio" and not self._restoring:
-            self.keep_box.setChecked(True)                  # звук из видео — само видео не выбрасываем
+            if not self.keep_box.isChecked():               # звук из видео — само видео не выбрасываем
+                self.keep_box.setChecked(True)
+                self._auto_keep = True                      # поставил набор, а не человек — уйдём с набора, снимем
+        elif getattr(self, "_auto_keep", False):
+            self.keep_box.setChecked(False)
         self.cfg["convert_preset"] = key
         self.settings_changed.emit()
         self._show_groups(key == GROUPS and self.survey is not None and not self.ready)
+        if self.survey is not None and not self.ready and not self.busy:
+            self.step_text.setText(self._groups_step() if key == GROUPS else tr("Нажми «Подготовить файлы»."))
         self._update_start()
         self._update_hint()
 
     def _keep_toggled(self, on):
+        self._auto_keep = False                     # галочку тронули — дальше она как поставлена
         self.cfg["convert_beside"] = on
         self.settings_changed.emit()
         if getattr(self, "survey_bridge", None) is not None:
@@ -221,8 +227,7 @@ class ConvertPage(CompressPage):
         hint = tr("Не хватает программ: {names}. Запусти tools/fetch_tools.py.",
                   names=", ".join(missing)) if missing else ""
         if not hint and self.ready and self.prepared and self.prepared != self._settings():
-            hint = tr("Настройки изменились — нажми «Подготовить файлы», чтобы применить их. Кнопка внизу "
-                      "сделает то, что подготовлено.")
+            hint = tr("Выбор изменился — нажми «Подготовить файлы» ещё раз.")
         self.hint.setText(hint)
         self.hint.setVisible(bool(hint))
 
@@ -231,7 +236,7 @@ class ConvertPage(CompressPage):
         if missing:
             return tr("Не хватает программ: {names}. Запусти tools/fetch_tools.py.", names=", ".join(missing))
         if self.preset() == GROUPS and self._surveyed() and not self._to_do():
-            return tr("Сейчас у всех групп выбрано «Не трогать» — выбери, что сделать, хотя бы для одной.")
+            return tr("Везде «Не трогать» — выбери действие хотя бы для одной группы.")
         return None
 
     def _settings(self):
@@ -349,9 +354,7 @@ class ConvertPage(CompressPage):
             self.empty.setText(self.T["none_found"])
             self.stack.setCurrentIndex(0)
         else:
-            self.step_text.setText(tr("Нашёл {n} {videos}. Проверь, что сделать с каждой группой, и нажми "
-                                      "«Подготовить файлы».", n=num(n),
-                                      videos=plural(n, "видео|видео|видео", "video|videos")))
+            self.step_text.setText(self._groups_step())
             self._fill_groups()
             self._show_groups(True)
         extra = []
@@ -361,6 +364,11 @@ class ConvertPage(CompressPage):
             extra.append(tr("Лежат только в облаке или на телефоне — пропущены: {n}.", n=num(res.cloud_skipped)))
         self.status.setText(" ".join(extra))
         self._update_start()
+
+    def _groups_step(self):
+        n = sum(len(g.files) for g in self.survey.groups)
+        return tr("Нашёл {n} {videos}. Выбери, что сделать с каждой группой.", n=num(n),
+                  videos=plural(n, "видео|видео|видео", "video|videos"))
 
     def _fill_groups(self):
         while self.groups_lay.count():
@@ -394,13 +402,20 @@ class ConvertPage(CompressPage):
                 U.why(choose, tr("Эти файлы лучше не трогать — выбрать другое нельзя."))
             top.addWidget(choose)
             v.addLayout(top)
-            v.addWidget(WrapLabel(tr(why_text), "muted"))
-            result = WrapLabel("", "strong")
+            if why_text:                            # у очевидных групп («Большие видео» + размер) строки нет
+                v.addWidget(WrapLabel(tr(why_text), "muted"))
+            result = WrapLabel("")                  # обычным шрифтом: жирное спорило с названием группы
             v.addWidget(result)
             self.group_boxes[g.kind] = (choose, result)
             self.groups_lay.addWidget(box)
             self._group_action(g, g.action)
         self.groups_lay.addStretch()
+        if self.group_boxes:                        # списки — одной ширины: ровный край, а не ступеньки
+            for b, _r in self.group_boxes.values():
+                b.ensurePolished()                  # ширина — уже со стилем темы, иначе края расходятся на 10 px
+            width = max(b.sizeHint().width() for b, _r in self.group_boxes.values())
+            for b, _r in self.group_boxes.values():
+                b.setMinimumWidth(width)
 
     def _group_action(self, g, action):
         g.action = action
@@ -418,22 +433,26 @@ class ConvertPage(CompressPage):
             n, size = by.get(g.action, (0, 0))
             by[g.action] = (n + len(g.files), size + g.size)
         lines = []
-        for action in convcore.ACTIONS:
+        for action in list(convcore.ACTIONS)[1:] + ["nothing"]:     # сначала то, что изменится
             if action in by:
                 n, size = by[action]
-                lines.append(tr("• {what}: {n} {videos} ({size})", what=tr(convcore.ACTIONS[action][0]), n=num(n),
-                                videos=plural(n, "видео|видео|видео", "video|videos"), size=dupcore.human_size(size)))
+                what, videos = tr(convcore.ACTIONS[action][2]), plural(n, "видео|видео|видео", "video|videos")
+                lines.append(tr("• {what}: {n} {videos}", what=what, n=num(n), videos=videos) if action == "nothing"
+                             else tr("• {what}: {n} {videos} ({size})", what=what, n=num(n), videos=videos,
+                                     size=dupcore.human_size(size)))
         lines.append("")
-        if not self._to_do():
-            lines.append(tr("Сейчас у всех групп выбрано «Не трогать» — выбери, что сделать, хотя бы для одной."))
+        to_do = self._to_do()
+        if not to_do:
+            lines.append(tr("Везде «Не трогать» — выбери действие хотя бы для одной группы."))
         else:
-            lines.append(tr("Сначала программа всё подготовит и покажет тебе — с файлами ничего не случится, пока "
-                            "ты не нажмёшь кнопку внизу."))
-            if self.beside():
-                lines.append(tr("Новые файлы лягут рядом, оригиналы останутся."))
-            else:
-                lines.append(tr("Новые файлы встанут на место оригиналов, а оригиналы уйдут в Корзину — вернуть "
-                                "можно оттуда. Звук (MP3) всегда кладётся рядом с видео."))
+            # на шаге групп кнопки замены ещё нет — обещание без «кнопки внизу»
+            lines.append(tr("Сначала покажу результат. Файлы не изменятся, пока ты не согласишься."))
+            audio = any(g.action == "audio" for g in to_do)
+            if any(g.action != "audio" for g in to_do):
+                lines.append(tr("Новые файлы лягут рядом. Оригиналы останутся.") if self.beside() else
+                             tr("Оригиналы уйдут в Корзину."))
+            if audio:                               # звук — всегда рядом с видео (prepare_groups)
+                lines.append(tr("MP3 ляжет рядом с видео."))
         self.cmp_hint.setText("\n".join(lines))
 
     def _show_groups(self, on):
@@ -444,6 +463,8 @@ class ConvertPage(CompressPage):
         elif self.ready:
             self.stack.setCurrentIndex(1)
             self.btn_groups.setVisible(self.preset() == GROUPS and self.survey is not None and not self.busy)
+        elif self.stack.currentIndex() == 2:
+            self.stack.setCurrentIndex(0)           # выбран набор, готового нет — заглушка, а не чужие группы
         groups = self.stack.currentIndex() == 2
         # на шаге групп отмечать и заменять ещё нечего — эти кнопки только путают
         for b in (self.btn_mark_all, self.btn_unmark, self.btn_replace):
