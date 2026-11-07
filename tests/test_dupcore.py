@@ -356,6 +356,38 @@ class SettingsFile(unittest.TestCase):
                                       dl_allowed=True, dl_checked=1_700_000_000.5, dl_folder=r"E:\Видео"))
         self.assertEqual(tuple(good[k] for k in keys), ("audio", "720", "m4a", True, 1_700_000_000.5, r"E:\Видео"))
 
+    def test_convert_choice_survives_restart(self):
+        """Выбор «Конвертации» — тот же после перезапуска: load() берёт только ключи из DEFAULTS."""
+        import convcore
+        import settings
+        d = tempfile.mkdtemp(prefix="cfg_")
+        saved = settings.DIR, settings.PATH
+        settings.DIR, settings.PATH = d, os.path.join(d, "settings.json")
+        try:
+            custom = convcore.Target("webm", "av1", quality="high", size=720, audio="opus", device="cpu").as_dict()
+            cfg = settings.load()
+            cfg.update(convert_preset="small", convert_custom=custom, convert_beside=True, convert_folder=r"E:\Видео")
+            settings.save(cfg)
+            again = settings.load()
+            self.assertEqual((again["convert_preset"], again["convert_custom"], again["convert_beside"],
+                              again["convert_folder"]), ("small", custom, True, r"E:\Видео"))
+            self.assertEqual(convcore.Target.from_dict(again["convert_custom"]).as_dict(), custom)
+        finally:
+            settings.DIR, settings.PATH = saved
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_bad_convert_values_fall_back_to_defaults(self):
+        import settings
+        keys = ("convert_preset", "convert_custom", "convert_beside", "convert_folder")
+        bad = settings.sanitize(dict(settings.DEFAULTS, convert_preset="всё", convert_custom="av1",
+                                     convert_beside="да", convert_folder=None))
+        self.assertEqual(tuple(bad[k] for k in keys), ("groups", {}, False, ""))
+
+    def test_convert_presets_in_settings_match_convcore(self):
+        import convcore
+        import settings
+        self.assertEqual(settings.ALLOWED["convert_preset"], {"groups"} | set(convcore.PRESETS))
+
     def test_old_setting_close_to_tray_false_means_quit(self):
         import json
         import settings

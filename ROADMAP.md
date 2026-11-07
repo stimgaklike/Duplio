@@ -50,9 +50,9 @@ MTS 12, MPG 4; WebP, AVIF, TIFF — нет.
     «Проверь, что сделать с каждой группой», а «Подготовить» сделает набор (`_preset_picked` →
     `_show_groups(False)` ничего не меняет, пока нет готовых файлов);
   - «Только звук» ставит «Оставить оригиналы», и галочка остаётся после возврата к группам.
-- **Выбор «Конвертации» не сохраняется между запусками:** `convert_preset` / `convert_custom` /
-  `convert_beside` нет в `settings.DEFAULTS`, а `load`/`save` берут только известные ключи. Добавить их и
-  проверку в `sanitize` (тест — рядом с `test_bad_download_values_fall_back_to_defaults`).
+- ~~Выбор «Конвертации» не сохраняется между запусками~~ — 7.11.2026: `convert_preset` / `convert_custom` /
+  `convert_beside` и папка `convert_folder` — в `settings.DEFAULTS` и `sanitize`; тесты в `test_dupcore.py`
+  (сохранил → загрузил; испорченные значения; список наборов = `convcore.PRESETS`).
 - **Фото в «Конвертации»**: HEIC → JPEG, JPEG/PNG ↔ WebP/AVIF — отдельной строкой «Фото → …» на той же вкладке
   (предложено владельцу, ждёт ответа).
 - **HEIC → JPEG**: проверить, открывает ли HEIC наш FFmpeg 8.1; если нет — pillow-heif (спросить).

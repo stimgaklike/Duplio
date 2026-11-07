@@ -37,6 +37,10 @@ DEFAULTS = {
     "dl_audio": "mp3",           # mp3 / m4a
     "dl_allowed": False,         # человек разрешил скачать yt-dlp
     "dl_checked": 0,             # когда последний раз проверяли новую версию yt-dlp
+    "convert_folder": "",
+    "convert_preset": "groups",  # groups — «Подобрать для каждого», иначе ключ convcore.PRESETS
+    "convert_custom": {},        # «Свой»: convcore.Target.as_dict(); неверное внутри чинит Target.from_dict
+    "convert_beside": False,     # «Оставить оригиналы»
 }
 META_GROUPS = {"place", "camera", "time", "author", "thumb", "other"}
 
@@ -67,6 +71,8 @@ ALLOWED = {
     "dl_kind": {"video", "audio"},
     "dl_quality": {"best", "1080", "720", "480"},
     "dl_audio": {"mp3", "m4a"},
+    # без импорта convcore (настройки грузятся первыми); совпадение с convcore.PRESETS сверяет тест
+    "convert_preset": {"groups", "keep", "everywhere", "small", "apple", "audio", "custom"},
 }
 KINDS = {"photo", "video", "audio", "docs", "archives", "other"}
 
@@ -79,7 +85,9 @@ def sanitize(data):
     kinds = data.get("kinds")
     if not isinstance(kinds, list) or not set(kinds) <= KINDS:
         data["kinds"] = list(DEFAULTS["kinds"])
-    for key in ("tray_hint_shown", "check_updates", "dl_allowed"):
+    if not isinstance(data.get("convert_custom"), dict):
+        data["convert_custom"] = {}
+    for key in ("tray_hint_shown", "check_updates", "dl_allowed", "convert_beside"):
         if not isinstance(data.get(key), bool):
             data[key] = DEFAULTS[key]
     ck = data.get("compress_kinds")
@@ -88,7 +96,7 @@ def sanitize(data):
     mg = data.get("meta_groups")
     if not isinstance(mg, list) or not set(mg) <= META_GROUPS:
         data["meta_groups"] = list(DEFAULTS["meta_groups"])
-    for key in ("last_folder", "compress_folder", "meta_folder", "meta_copies", "dl_folder"):
+    for key in ("last_folder", "compress_folder", "meta_folder", "meta_copies", "dl_folder", "convert_folder"):
         if not isinstance(data.get(key), str):
             data[key] = ""
     for key in ("last_update_check", "dl_checked"):
