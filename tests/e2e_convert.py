@@ -169,10 +169,19 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QToolTip  # noqa: E402
 QTest.mouseClick(c.btn_replace, Qt.LeftButton)
 pump(0.3)
-check(QToolTip.isVisible() and QToolTip.text() == "Сначала нажми «Подготовить файлы» — пока делать нечего.",
+check(QToolTip.isVisible() and QToolTip.text() == "Сначала нажми «Посмотреть файлы» — пока делать нечего.",
       f"щелчок по недоступной кнопке объясняет почему: {QToolTip.text()!r}")
 QToolTip.hideText()
-check(c.stack.currentIndex() == 0 and "было → станет" in c.empty.text(), "до подготовки — заглушка")
+why_replace = c.btn_replace.property(ui_util.WHY)
+check(f"«{c.btn_start.text()}»" in why_replace,
+      f"причина у серой «Заменить» называет кнопку как на экране: {why_replace!r}, кнопка «{c.btn_start.text()}»")
+check(c.stack.currentIndex() == 0 and c.empty.text() == "Здесь появятся новые файлы.\n\nОригиналы не изменятся, "
+      "пока ты не согласишься.", "до подготовки — заглушка: " + c.empty.text())
+import re  # noqa: E402
+named = re.findall(r"«([^»]+)»", c.step_text.text())
+shown = {b.text() for b in c.findChildren(QPushButton) if b.isVisible()}
+check(not set(named) - shown, f"строка шага называет только кнопки, которые видны: «{c.step_text.text()}», "
+      f"кнопка — «{c.btn_start.text()}»")
 check(c.preset() == "groups" and "по группам" in c.preset_text.text() and not c.custom.isVisible()
       and not c.hint.isVisible(), "по умолчанию — «Подобрать для каждого», под ним пояснение")
 check(not c.keep_box.isChecked() and "в Корзину" in c.keep_box.toolTip(), "по умолчанию оригинал заменяется")
@@ -193,6 +202,9 @@ check(kinds == {"mov": ["IMG_0001.MOV", "прогулка.mov"], "old": ["MVI_00
 check(c.stack.currentIndex() == 2 and c.cmp_title.text() == "Что будет" and c.btn_start.text() == "Подготовить файлы",
       "видны группы, справа — «Что будет», кнопка — «Подготовить файлы»")
 check(not c.btn_replace.isVisible() and not c.btn_mark_all.isVisible(), "на шаге групп кнопок замены и отметок нет")
+why_replace = c.btn_replace.property(ui_util.WHY)
+check("«Подготовить файлы»" in why_replace,
+      f"кнопка сменила текст — причина у «Заменить» вслед за ней: {why_replace!r}")
 check("Файлы не изменятся, пока ты не согласишься" in c.cmp_hint.text(), "справа обещание: пока не согласишься")
 live_box = c.group_boxes["live"][0]
 check(not live_box.isEnabled() and live_box.count() == 1, "у «живых фото» выбрать нельзя — только «Не трогать»")

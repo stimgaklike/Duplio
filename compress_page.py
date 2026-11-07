@@ -1082,7 +1082,8 @@ class CompressPage(QWidget):
         elif self.busy:
             U.why(self.btn_replace, tr("Подожди: файлы ещё готовятся. Нажать можно, когда подготовка закончится."))
         elif not self.ready:
-            U.why(self.btn_replace, tr("Сначала нажми «{start}» — пока делать нечего.", start=self.T["start"]))
+            # имя — с самой кнопки: у «Конвертации» до просмотра папки там «Посмотреть файлы»
+            U.why(self.btn_replace, tr("Сначала нажми «{start}» — пока делать нечего.", start=self.btn_start.text()))
         else:
             U.why(self.btn_replace, tr("Отметь галочкой хотя бы один файл в списке."))
         self.summary.setVisible(bool(self.ready))
